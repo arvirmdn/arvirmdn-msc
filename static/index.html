@@ -107,6 +107,7 @@
         </svg>
         <span class="brand">ARVIRMDN MUSIKIN <span class="brand-version">V0.1</span></span>
         <button class="avatar-btn" id="avatarBtn" data-view="profileView" aria-label="Buka profil">
+          <img id="avatarImg" class="avatar-img" src="" alt="" style="display:none">
           <span id="avatarInitial">?</span>
         </button>
       </header>
@@ -159,9 +160,19 @@
 
       <section id="profileView" class="panel">
         <div class="profile-header">
-          <div class="profile-avatar"><span id="profileInitial">?</span></div>
+          <div class="profile-avatar-wrap">
+            <div class="profile-avatar" id="profileAvatarCircle">
+              <img id="profileAvatarImg" class="avatar-img" src="" alt="" style="display:none">
+              <span id="profileInitial">?</span>
+            </div>
+            <button class="avatar-edit-btn" id="avatarEditBtn" aria-label="Ubah foto profil">
+              <svg width="15" height="15" viewBox="0 0 24 24" fill="none"><path d="M4 7h3l1.5-2h7L17 7h3a1 1 0 0 1 1 1v11a1 1 0 0 1-1 1H4a1 1 0 0 1-1-1V8a1 1 0 0 1 1-1Z" stroke="currentColor" stroke-width="1.8" stroke-linejoin="round"/><circle cx="12" cy="13" r="3.4" stroke="currentColor" stroke-width="1.8"/></svg>
+            </button>
+            <input type="file" id="avatarFileInput" accept="image/png,image/jpeg,image/webp" style="display:none">
+          </div>
           <h2 class="profile-username" id="profileUsername">—</h2>
           <p class="profile-joined" id="profileJoined"></p>
+          <button class="avatar-remove-btn" id="avatarRemoveBtn" style="display:none">Hapus foto profil</button>
         </div>
 
         <div class="profile-stats">

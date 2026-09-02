@@ -140,16 +140,41 @@ function showAuthScreen() {
   authScreen.classList.remove("hidden");
 }
 
-function updateAvatarInitial() {
+function applyAvatarDisplay() {
   const initial = currentUser && currentUser.username ? currentUser.username[0].toUpperCase() : "?";
-  document.getElementById("avatarInitial").textContent = initial;
+  const url = currentUser && currentUser.avatar_url ? `${API_BASE}${currentUser.avatar_url}` : null;
+
+  const avatarImgEl = document.getElementById("avatarImg");
+  const avatarInitialEl = document.getElementById("avatarInitial");
+  const profileAvatarImgEl = document.getElementById("profileAvatarImg");
+  const profileInitialEl = document.getElementById("profileInitial");
+  const avatarRemoveBtnEl = document.getElementById("avatarRemoveBtn");
+
+  avatarInitialEl.textContent = initial;
+  profileInitialEl.textContent = initial;
+
+  if (url) {
+    avatarImgEl.src = url;
+    avatarImgEl.style.display = "block";
+    avatarInitialEl.style.display = "none";
+    profileAvatarImgEl.src = url;
+    profileAvatarImgEl.style.display = "block";
+    profileInitialEl.style.display = "none";
+    avatarRemoveBtnEl.style.display = "inline-block";
+  } else {
+    avatarImgEl.style.display = "none";
+    avatarInitialEl.style.display = "block";
+    profileAvatarImgEl.style.display = "none";
+    profileInitialEl.style.display = "block";
+    avatarRemoveBtnEl.style.display = "none";
+  }
 }
 
 async function fetchAndSetCurrentUser() {
   const res = await fetch(`${API_BASE}/api/auth/me`, { headers: authHeaders() });
   if (!res.ok) throw new Error("Sesi tidak valid");
   currentUser = await res.json();
-  updateAvatarInitial();
+  applyAvatarDisplay();
   return currentUser;
 }
 
@@ -239,6 +264,7 @@ logoutBtn.addEventListener("click", async () => {
   currentUser = null;
   playlists = [];
   renderPlaylists();
+  applyAvatarDisplay();
   showAuthScreen();
 });
 
@@ -786,8 +812,7 @@ renderPlaylists();
 // ---------- Profil ----------
 function renderProfile() {
   if (!currentUser) return;
-  const initial = currentUser.username ? currentUser.username[0].toUpperCase() : "?";
-  document.getElementById("profileInitial").textContent = initial;
+  applyAvatarDisplay();
   document.getElementById("profileUsername").textContent = currentUser.username || "-";
 
   const joinedEl = document.getElementById("profileJoined");
@@ -806,6 +831,60 @@ function renderProfile() {
   document.getElementById("profilePlaylistCount").textContent = playlists.length;
   document.getElementById("profileHistoryCount").textContent = history.length;
 }
+
+const avatarEditBtn = document.getElementById("avatarEditBtn");
+const avatarFileInput = document.getElementById("avatarFileInput");
+const avatarRemoveBtn = document.getElementById("avatarRemoveBtn");
+
+avatarEditBtn.addEventListener("click", () => avatarFileInput.click());
+
+avatarFileInput.addEventListener("change", async () => {
+  const file = avatarFileInput.files[0];
+  if (!file) return;
+
+  if (file.size > 5 * 1024 * 1024) {
+    showAuthErrorFallback("Ukuran foto maksimal 5MB.");
+    avatarFileInput.value = "";
+    return;
+  }
+
+  const formData = new FormData();
+  formData.append("file", file);
+  avatarEditBtn.disabled = true;
+  try {
+    // Jangan set Content-Type manual — browser yang set boundary multipart-nya
+    const res = await fetch(`${API_BASE}/api/auth/avatar`, {
+      method: "POST",
+      headers: authHeaders(),
+      body: formData,
+    });
+    const data = await res.json();
+    if (!res.ok) {
+      showAuthErrorFallback(data.detail || "Gagal mengunggah foto.");
+      return;
+    }
+    currentUser.avatar_url = data.avatar_url;
+    applyAvatarDisplay();
+  } catch (err) {
+    console.error(err);
+    showAuthErrorFallback("Tidak bisa menghubungi server.");
+  } finally {
+    avatarEditBtn.disabled = false;
+    avatarFileInput.value = "";
+  }
+});
+
+avatarRemoveBtn.addEventListener("click", async () => {
+  avatarRemoveBtn.disabled = true;
+  try {
+    await fetch(`${API_BASE}/api/auth/avatar`, { method: "DELETE", headers: authHeaders() });
+  } catch (err) {
+    console.error(err);
+  }
+  currentUser.avatar_url = null;
+  applyAvatarDisplay();
+  avatarRemoveBtn.disabled = false;
+});
 
 const openChangePasswordBtn = document.getElementById("openChangePasswordBtn");
 const changePasswordBox = document.getElementById("changePasswordBox");
