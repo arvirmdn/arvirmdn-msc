@@ -1,10 +1,16 @@
 const API_BASE = ""; // sameorigin; ganti kalau backend beda domain dari frontend
 
 const searchInput = document.getElementById("searchInput");
+const searchWrap = document.getElementById("searchWrap");
 const statusRow = document.getElementById("statusRow");
 const resultList = document.getElementById("resultList");
 const historyList = document.getElementById("historyList");
 const emptyState = document.getElementById("emptyState");
+
+const homeSections = document.getElementById("homeSections");
+const homeLoading = document.getElementById("homeLoading");
+const homeErrorState = document.getElementById("homeErrorState");
+const homeRetryBtn = document.getElementById("homeRetryBtn");
 
 const audio = document.getElementById("audioPlayer");
 
@@ -68,6 +74,7 @@ let playlists = JSON.parse(localStorage.getItem("musikin_playlists") || "[]");
 let activePlaylistId = null;
 let addModalTrack = null;
 let nameModalMode = null; // 'create' | 'createAndAdd' | 'rename'
+let homeLoaded = false;
 
 // ---------- Bottom nav ----------
 navBtns.forEach((btn) => {
@@ -77,8 +84,10 @@ navBtns.forEach((btn) => {
     const target = btn.dataset.view;
     panels.forEach((p) => p.classList.remove("active"));
     document.getElementById(target).classList.add("active");
+    searchWrap.classList.toggle("show", target === "searchView");
     if (target === "libraryView") renderHistory();
     if (target === "playlistView") renderPlaylists();
+    if (target === "homeView" && !homeLoaded) loadHome();
   });
 });
 
@@ -226,6 +235,9 @@ function highlightPlayingRow() {
     const dur = el.querySelector(".track-duration");
     if (eq) eq.style.display = isPlaying && !audio.paused ? "flex" : "none";
     if (dur) dur.style.display = isPlaying && !audio.paused ? "none" : "block";
+  });
+  document.querySelectorAll(".home-card").forEach((el) => {
+    el.classList.toggle("playing", el.dataset.id === currentId && !audio.paused);
   });
 }
 
@@ -531,3 +543,64 @@ addModalOverlay.addEventListener("click", (e) => {
 });
 
 renderPlaylists();
+
+// ---------- Home ----------
+async function loadHome() {
+  homeLoading.style.display = "flex";
+  homeErrorState.style.display = "none";
+  homeSections.innerHTML = "";
+  try {
+    const res = await fetch(`${API_BASE}/api/home`);
+    if (!res.ok) throw new Error("Gagal memuat home");
+    const data = await res.json();
+    homeLoaded = true;
+    homeLoading.style.display = "none";
+    renderHomeSections(data.sections || []);
+  } catch (err) {
+    console.error(err);
+    homeLoading.style.display = "none";
+    homeErrorState.style.display = "flex";
+  }
+}
+
+homeRetryBtn.addEventListener("click", loadHome);
+
+function renderHomeSections(sections) {
+  homeSections.innerHTML = "";
+  if (!sections.length) {
+    homeErrorState.style.display = "flex";
+    return;
+  }
+  sections.forEach((section) => {
+    if (!section.tracks || !section.tracks.length) return;
+    const wrap = document.createElement("div");
+    wrap.className = "home-section";
+    wrap.innerHTML = `<h2 class="home-section-title">${escapeHtml(section.title)}</h2>`;
+    const row = document.createElement("div");
+    row.className = "home-row";
+    section.tracks.forEach((track, idx) => {
+      row.appendChild(buildHomeCard(track, () => playTrack(idx, section.tracks)));
+    });
+    wrap.appendChild(row);
+    homeSections.appendChild(wrap);
+  });
+  highlightPlayingRow();
+}
+
+function buildHomeCard(track, onClick) {
+  const card = document.createElement("button");
+  card.className = "home-card";
+  card.dataset.id = track.id;
+  card.innerHTML = `
+    <div class="home-card-thumb-wrap">
+      <img class="home-card-thumb" src="${track.thumbnail || ""}" alt="">
+      <div class="home-card-eq"><span></span><span></span><span></span></div>
+    </div>
+    <div class="home-card-title">${escapeHtml(track.title)}</div>
+    <div class="home-card-artist">${escapeHtml(track.artist || "")}</div>
+  `;
+  card.addEventListener("click", onClick);
+  return card;
+}
+
+loadHome();
