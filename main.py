@@ -1,6 +1,7 @@
 import asyncio
 import functools
 import re
+import time
 
 from fastapi import FastAPI, HTTPException, Query, Request
 from fastapi.middleware.cors import CORSMiddleware
@@ -38,6 +39,19 @@ app.add_middleware(
 )
 
 VIDEO_ID_RE = re.compile(r"^[a-zA-Z0-9_-]{11}$")
+
+# Kategori yang muncul di halaman Home (gaya Spotify: beberapa baris/section).
+# Query di sini yang dipakai buat "nyari" ke YouTube, judul di sebelah kiri yang
+# ditampilkan ke user. Bebas diubah/ditambah sesuai selera.
+HOME_SECTIONS = [
+    ("Trending Sekarang", "lagu trending indonesia terbaru"),
+    ("Lagu Pop Terbaru", "lagu pop indonesia terbaru"),
+    ("Top Hits Global", "top global hits 2026"),
+    ("Lagi Viral", "lagu viral tiktok terbaru"),
+]
+
+_home_cache = {"data": None, "ts": 0}
+HOME_CACHE_TTL = 20 * 60  # detik — biar gak nge-hit yt-dlp tiap kali tab Home dibuka
 
 YDL_SEARCH_OPTS = {
     "quiet": True,
@@ -131,6 +145,29 @@ async def search(q: str = Query(..., min_length=1), limit: int = Query(20, ge=1,
     except Exception as exc:
         raise HTTPException(status_code=502, detail=f"Gagal mencari: {exc}")
     return {"query": q, "results": results}
+
+
+@app.get("/api/home")
+async def home():
+    now = time.time()
+    if _home_cache["data"] is not None and (now - _home_cache["ts"]) < HOME_CACHE_TTL:
+        return _home_cache["data"]
+
+    async def build_section(title: str, query: str):
+        try:
+            tracks = await _run_sync(_search_youtube, query, 12)
+        except Exception:
+            tracks = []
+        return {"title": title, "tracks": tracks}
+
+    sections = await asyncio.gather(
+        *(build_section(title, query) for title, query in HOME_SECTIONS)
+    )
+    sections = [s for s in sections if s["tracks"]]
+    payload = {"sections": sections}
+    _home_cache["data"] = payload
+    _home_cache["ts"] = now
+    return payload
 
 
 @app.get("/api/stream/{video_id}")
