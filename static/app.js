@@ -87,6 +87,7 @@ const authConfirmEye = document.getElementById("authConfirmEye");
 const logoutBtn = document.getElementById("logoutBtn");
 
 let authMode = "login"; // 'login' | 'register'
+let currentUser = null;
 
 function getToken() {
   return localStorage.getItem(AUTH_TOKEN_KEY);
@@ -137,6 +138,19 @@ function showAuthError(msg) {
 
 function showAuthScreen() {
   authScreen.classList.remove("hidden");
+}
+
+function updateAvatarInitial() {
+  const initial = currentUser && currentUser.username ? currentUser.username[0].toUpperCase() : "?";
+  document.getElementById("avatarInitial").textContent = initial;
+}
+
+async function fetchAndSetCurrentUser() {
+  const res = await fetch(`${API_BASE}/api/auth/me`, { headers: authHeaders() });
+  if (!res.ok) throw new Error("Sesi tidak valid");
+  currentUser = await res.json();
+  updateAvatarInitial();
+  return currentUser;
 }
 
 async function enterApp() {
@@ -198,6 +212,7 @@ async function submitAuth() {
     authUsernameInput.value = "";
     authPasswordInput.value = "";
     authConfirmPasswordInput.value = "";
+    await fetchAndSetCurrentUser();
     await enterApp();
   } catch (err) {
     console.error(err);
@@ -221,6 +236,7 @@ logoutBtn.addEventListener("click", async () => {
     // abaikan, tetap logout di sisi klien
   }
   clearAuth();
+  currentUser = null;
   playlists = [];
   renderPlaylists();
   showAuthScreen();
@@ -234,14 +250,10 @@ logoutBtn.addEventListener("click", async () => {
     return;
   }
   try {
-    const res = await fetch(`${API_BASE}/api/auth/me`, { headers: authHeaders() });
-    if (!res.ok) {
-      clearAuth();
-      showAuthScreen();
-      return;
-    }
+    await fetchAndSetCurrentUser();
     await enterApp();
   } catch (err) {
+    clearAuth();
     showAuthScreen();
   }
 })();
@@ -257,19 +269,22 @@ let nameModalMode = null; // 'create' | 'createAndAdd' | 'rename'
 let homeLoaded = false;
 
 // ---------- Bottom nav ----------
+function switchView(target) {
+  navBtns.forEach((b) => b.classList.toggle("active", b.dataset.view === target));
+  panels.forEach((p) => p.classList.remove("active"));
+  document.getElementById(target).classList.add("active");
+  searchWrap.classList.toggle("show", target === "searchView");
+  if (target === "libraryView") renderHistory();
+  if (target === "playlistView") renderPlaylists();
+  if (target === "profileView") renderProfile();
+  if (target === "homeView" && !homeLoaded) loadHome();
+}
+
 navBtns.forEach((btn) => {
-  btn.addEventListener("click", () => {
-    navBtns.forEach((b) => b.classList.remove("active"));
-    btn.classList.add("active");
-    const target = btn.dataset.view;
-    panels.forEach((p) => p.classList.remove("active"));
-    document.getElementById(target).classList.add("active");
-    searchWrap.classList.toggle("show", target === "searchView");
-    if (target === "libraryView") renderHistory();
-    if (target === "playlistView") renderPlaylists();
-    if (target === "homeView" && !homeLoaded) loadHome();
-  });
+  btn.addEventListener("click", () => switchView(btn.dataset.view));
 });
+
+document.getElementById("avatarBtn").addEventListener("click", () => switchView("profileView"));
 
 // ---------- Pencarian otomatis (debounce) ke YouTube ----------
 searchInput.addEventListener("input", () => {
@@ -767,6 +782,91 @@ addModalOverlay.addEventListener("click", (e) => {
 });
 
 renderPlaylists();
+
+// ---------- Profil ----------
+function renderProfile() {
+  if (!currentUser) return;
+  const initial = currentUser.username ? currentUser.username[0].toUpperCase() : "?";
+  document.getElementById("profileInitial").textContent = initial;
+  document.getElementById("profileUsername").textContent = currentUser.username || "-";
+
+  const joinedEl = document.getElementById("profileJoined");
+  if (currentUser.created_at) {
+    const d = new Date(currentUser.created_at);
+    if (!isNaN(d)) {
+      const formatted = d.toLocaleDateString("id-ID", { day: "numeric", month: "long", year: "numeric" });
+      joinedEl.textContent = `Bergabung sejak ${formatted}`;
+    } else {
+      joinedEl.textContent = "";
+    }
+  } else {
+    joinedEl.textContent = "";
+  }
+
+  document.getElementById("profilePlaylistCount").textContent = playlists.length;
+  document.getElementById("profileHistoryCount").textContent = history.length;
+}
+
+const openChangePasswordBtn = document.getElementById("openChangePasswordBtn");
+const changePasswordBox = document.getElementById("changePasswordBox");
+const cpCurrent = document.getElementById("cpCurrent");
+const cpNew = document.getElementById("cpNew");
+const cpConfirm = document.getElementById("cpConfirm");
+const cpError = document.getElementById("cpError");
+const cpSuccess = document.getElementById("cpSuccess");
+const cpSubmitBtn = document.getElementById("cpSubmitBtn");
+
+openChangePasswordBtn.addEventListener("click", () => {
+  const showing = changePasswordBox.style.display !== "none";
+  changePasswordBox.style.display = showing ? "none" : "block";
+  openChangePasswordBtn.classList.toggle("open", !showing);
+});
+
+cpSubmitBtn.addEventListener("click", async () => {
+  cpError.style.display = "none";
+  cpSuccess.style.display = "none";
+  const current_password = cpCurrent.value;
+  const new_password = cpNew.value;
+  const confirm_new_password = cpConfirm.value;
+
+  if (!current_password || !new_password || !confirm_new_password) {
+    cpError.textContent = "Semua kolom wajib diisi.";
+    cpError.style.display = "block";
+    return;
+  }
+
+  cpSubmitBtn.disabled = true;
+  try {
+    const res = await fetch(`${API_BASE}/api/auth/password`, {
+      method: "PUT",
+      headers: authHeaders({ "Content-Type": "application/json" }),
+      body: JSON.stringify({ current_password, new_password, confirm_new_password }),
+    });
+    const data = await res.json();
+    if (!res.ok) {
+      cpError.textContent = data.detail || "Gagal mengubah kata sandi.";
+      cpError.style.display = "block";
+      return;
+    }
+    cpSuccess.textContent = "Kata sandi berhasil diubah. Silakan masuk lagi...";
+    cpSuccess.style.display = "block";
+    cpCurrent.value = "";
+    cpNew.value = "";
+    cpConfirm.value = "";
+    // Backend memutus semua sesi lama setelah ganti password demi keamanan
+    setTimeout(() => {
+      clearAuth();
+      currentUser = null;
+      location.reload();
+    }, 1500);
+  } catch (err) {
+    console.error(err);
+    cpError.textContent = "Tidak bisa menghubungi server.";
+    cpError.style.display = "block";
+  } finally {
+    cpSubmitBtn.disabled = false;
+  }
+});
 
 // ---------- Home ----------
 async function loadHome() {
