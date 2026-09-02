@@ -44,15 +44,81 @@ input { font-family: inherit; }
 
 /* ---------- Topbar ---------- */
 .topbar {
+  display: flex;
+  align-items: center;
+  gap: 9px;
   padding: calc(18px + var(--safe-top)) 20px 8px;
 }
 
 .brand {
   font-family: "Space Grotesk", sans-serif;
   font-weight: 700;
-  font-size: 22px;
-  letter-spacing: -0.02em;
+  font-size: 18px;
+  letter-spacing: -0.01em;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
 }
+
+.brand-version {
+  color: var(--accent);
+  font-weight: 600;
+  font-size: 13px;
+  margin-left: 2px;
+  vertical-align: middle;
+}
+
+/* ---------- Logo musik animasi ---------- */
+.brand-logo {
+  position: relative;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 32px;
+  height: 32px;
+  flex-shrink: 0;
+  border-radius: 9px;
+  background: var(--accent-dim);
+  color: var(--accent);
+}
+
+.brand-logo svg {
+  animation: logoSway 2.4s ease-in-out infinite;
+  transform-origin: 70% 90%;
+}
+
+@keyframes logoSway {
+  0%, 100% { transform: rotate(0deg); }
+  25% { transform: rotate(-8deg); }
+  75% { transform: rotate(8deg); }
+}
+
+.logo-note { animation: logoPulse 1.2s ease-in-out infinite; transform-origin: center; }
+.brand-logo circle.logo-note:nth-of-type(2) { animation-delay: .3s; }
+
+@keyframes logoPulse {
+  0%, 100% { transform: scale(1); }
+  50% { transform: scale(1.18); }
+}
+
+.logo-bars {
+  position: absolute;
+  bottom: 3px;
+  right: 2px;
+  display: flex;
+  align-items: flex-end;
+  gap: 2px;
+  height: 9px;
+}
+.logo-bars span {
+  width: 2.2px;
+  border-radius: 2px;
+  background: var(--accent);
+  animation: eqBounce 1s ease-in-out infinite;
+}
+.logo-bars span:nth-child(1) { height: 4px; animation-delay: 0s; }
+.logo-bars span:nth-child(2) { height: 9px; animation-delay: .2s; }
+.logo-bars span:nth-child(3) { height: 6px; animation-delay: .4s; }
 
 /* ---------- Search ---------- */
 .search-wrap {

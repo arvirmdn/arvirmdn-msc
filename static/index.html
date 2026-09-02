@@ -4,11 +4,11 @@
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover">
 <meta name="theme-color" content="#0b0c0f">
-<title>Musikin</title>
+<title>ARVIRMDN MUSIKIN V0.1</title>
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
 <link href="https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@500;600;700&family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
-<link rel="stylesheet" href="style.css?v=3">
+<link rel="stylesheet" href="style.css?v=4">
 </head>
 <body>
 
@@ -17,7 +17,17 @@
     <!-- ===== HOME / SEARCH SCREEN ===== -->
     <main class="screen" id="mainScreen">
       <header class="topbar">
-        <span class="brand">Musikin</span>
+        <span class="brand-logo" aria-hidden="true">
+          <svg viewBox="0 0 24 24" width="22" height="22">
+            <path d="M9 18V5l10-2v13" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"/>
+            <circle class="logo-note" cx="6" cy="18" r="3" fill="currentColor"/>
+            <circle class="logo-note" cx="16" cy="16" r="3" fill="currentColor"/>
+          </svg>
+          <span class="logo-bars">
+            <span></span><span></span><span></span>
+          </span>
+        </span>
+        <span class="brand">ARVIRMDN MUSIKIN <span class="brand-version">V0.1</span></span>
       </header>
 
       <div class="search-wrap" id="searchWrap">
@@ -195,6 +205,6 @@
 
   <audio id="audioPlayer" preload="none"></audio>
 
-  <script src="app.js?v=3"></script>
+  <script src="app.js?v=4"></script>
 </body>
 </html>
