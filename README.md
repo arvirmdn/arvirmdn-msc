@@ -28,6 +28,35 @@ uvicorn main:app --reload --port 8000
 
 Buka `http://localhost:8000` di browser.
 
+## Akun & Playlist (baru)
+
+Sekarang ada sistem **Masuk / Daftar** sebelum masuk ke app. Playlist disimpan
+di database (bukan `localStorage` lagi), jadi kalau user logout lalu login
+lagi (bahkan dari HP lain), playlist mereka tetap ada.
+
+- Password di-hash (PBKDF2-SHA256 + salt per user), tidak pernah disimpan
+  polos.
+- Sesi login pakai token sederhana (`sessions` table), dikirim lewat header
+  `Authorization: Bearer <token>`.
+- Endpoint baru: `POST /api/auth/register`, `POST /api/auth/login`,
+  `POST /api/auth/logout`, `GET /api/auth/me`, dan CRUD
+  `GET/POST/PUT/DELETE /api/playlists`.
+
+### ⚠️ PENTING — data akun bisa hilang di Railway kalau tidak pasang Volume
+
+Database disimpan sebagai file SQLite (`musikin.db`) di filesystem container.
+Railway **mereset filesystem setiap kali kamu redeploy** kecuali kamu pasang
+**Railway Volume**:
+
+1. Di project Railway → tab **Volumes** → **New Volume** → mount path
+   misalnya `/data`.
+2. Set environment variable `DB_PATH=/data/musikin.db`.
+3. Redeploy. Setelah ini, akun & playlist akan tetap ada walau kamu push
+   kode baru.
+
+Tanpa langkah ini, versi dasar tetap jalan normal untuk development/testing,
+tapi semua akun & playlist akan hilang setiap kali ada deploy baru.
+
 ## Cara kerja
 
 1. User ketik query di search box → setelah 500ms jeda (debounce), frontend

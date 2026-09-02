@@ -1,14 +1,129 @@
 import asyncio
 import functools
+import hashlib
+import json
+import os
 import re
+import secrets
+import sqlite3
 import time
+from contextlib import contextmanager
+from datetime import datetime, timezone
+from typing import List, Optional
 
-from fastapi import FastAPI, HTTPException, Query, Request
+from fastapi import Depends, FastAPI, Header, HTTPException, Query, Request
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import StreamingResponse
 from fastapi.staticfiles import StaticFiles
+from pydantic import BaseModel, Field
 import httpx
 import yt_dlp
+
+# ---------- Database (akun & playlist) ----------
+# Catatan penting: di Railway, file ini hilang tiap kali redeploy KECUALI kamu
+# pasang Railway Volume dan arahkan DB_PATH ke path di dalam volume itu
+# (mis. DB_PATH=/data/musikin.db). Tanpa volume, akun & playlist akan reset
+# setiap kali kamu push perubahan baru.
+DB_PATH = os.environ.get("DB_PATH", "musikin.db")
+
+
+def _init_db():
+    with sqlite3.connect(DB_PATH) as conn:
+        conn.execute(
+            """
+            CREATE TABLE IF NOT EXISTS users (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                username TEXT UNIQUE NOT NULL,
+                password_hash TEXT NOT NULL,
+                salt TEXT NOT NULL,
+                created_at TEXT NOT NULL
+            )
+            """
+        )
+        conn.execute(
+            """
+            CREATE TABLE IF NOT EXISTS sessions (
+                token TEXT PRIMARY KEY,
+                user_id INTEGER NOT NULL,
+                created_at TEXT NOT NULL
+            )
+            """
+        )
+        conn.execute(
+            """
+            CREATE TABLE IF NOT EXISTS playlists (
+                id TEXT PRIMARY KEY,
+                user_id INTEGER NOT NULL,
+                name TEXT NOT NULL,
+                tracks TEXT NOT NULL,
+                updated_at TEXT NOT NULL
+            )
+            """
+        )
+        conn.commit()
+
+
+_init_db()
+
+
+@contextmanager
+def get_db():
+    conn = sqlite3.connect(DB_PATH)
+    conn.row_factory = sqlite3.Row
+    try:
+        yield conn
+    finally:
+        conn.close()
+
+
+def _hash_password(password: str, salt: Optional[str] = None):
+    if salt is None:
+        salt = secrets.token_hex(16)
+    digest = hashlib.pbkdf2_hmac("sha256", password.encode("utf-8"), salt.encode("utf-8"), 150_000)
+    return digest.hex(), salt
+
+
+def _now():
+    return datetime.now(timezone.utc).isoformat()
+
+
+USERNAME_RE = re.compile(r"^[a-zA-Z0-9_]{3,20}$")
+
+
+class RegisterRequest(BaseModel):
+    username: str
+    password: str
+    confirm_password: str
+
+
+class LoginRequest(BaseModel):
+    username: str
+    password: str
+
+
+class PlaylistCreate(BaseModel):
+    name: str = Field(..., min_length=1, max_length=60)
+
+
+class PlaylistUpdate(BaseModel):
+    name: Optional[str] = Field(None, min_length=1, max_length=60)
+    tracks: Optional[List[dict]] = None
+
+
+def get_current_user(authorization: Optional[str] = Header(None)):
+    if not authorization or not authorization.startswith("Bearer "):
+        raise HTTPException(status_code=401, detail="Belum login")
+    token = authorization.split(" ", 1)[1].strip()
+    with get_db() as conn:
+        row = conn.execute(
+            "SELECT users.id AS id, users.username AS username "
+            "FROM sessions JOIN users ON users.id = sessions.user_id "
+            "WHERE sessions.token = ?",
+            (token,),
+        ).fetchone()
+    if not row:
+        raise HTTPException(status_code=401, detail="Sesi tidak valid, silakan login lagi")
+    return {"id": row["id"], "username": row["username"]}
 
 # Header ini WAJIB dikirim ke server audio YouTube (googlevideo.com), kalau tidak
 # sering di-cut/403 di tengah jalan — inilah penyebab audio "mati sendiri".
@@ -244,6 +359,137 @@ async def info(video_id: str):
         "duration": data.get("duration"),
         "thumbnail": (data.get("thumbnails") or [{}])[-1].get("url"),
     }
+
+
+
+# ---------- Auth ----------
+@app.post("/api/auth/register")
+async def register(payload: RegisterRequest):
+    username = payload.username.strip()
+    if not USERNAME_RE.match(username):
+        raise HTTPException(
+            status_code=400,
+            detail="Nama pengguna harus 3-20 karakter, hanya huruf/angka/underscore",
+        )
+    if len(payload.password) < 6:
+        raise HTTPException(status_code=400, detail="Kata sandi minimal 6 karakter")
+    if payload.password != payload.confirm_password:
+        raise HTTPException(status_code=400, detail="Konfirmasi kata sandi tidak cocok")
+
+    password_hash, salt = _hash_password(payload.password)
+    with get_db() as conn:
+        existing = conn.execute(
+            "SELECT id FROM users WHERE username = ?", (username,)
+        ).fetchone()
+        if existing:
+            raise HTTPException(status_code=409, detail="Nama pengguna sudah dipakai")
+        cur = conn.execute(
+            "INSERT INTO users (username, password_hash, salt, created_at) VALUES (?, ?, ?, ?)",
+            (username, password_hash, salt, _now()),
+        )
+        user_id = cur.lastrowid
+        token = secrets.token_hex(32)
+        conn.execute(
+            "INSERT INTO sessions (token, user_id, created_at) VALUES (?, ?, ?)",
+            (token, user_id, _now()),
+        )
+        conn.commit()
+    return {"token": token, "username": username}
+
+
+@app.post("/api/auth/login")
+async def login(payload: LoginRequest):
+    username = payload.username.strip()
+    with get_db() as conn:
+        row = conn.execute(
+            "SELECT id, password_hash, salt FROM users WHERE username = ?", (username,)
+        ).fetchone()
+        if not row:
+            raise HTTPException(status_code=401, detail="Nama pengguna atau kata sandi salah")
+        check_hash, _ = _hash_password(payload.password, row["salt"])
+        if not secrets.compare_digest(check_hash, row["password_hash"]):
+            raise HTTPException(status_code=401, detail="Nama pengguna atau kata sandi salah")
+        token = secrets.token_hex(32)
+        conn.execute(
+            "INSERT INTO sessions (token, user_id, created_at) VALUES (?, ?, ?)",
+            (token, row["id"], _now()),
+        )
+        conn.commit()
+    return {"token": token, "username": username}
+
+
+@app.post("/api/auth/logout")
+async def logout(authorization: Optional[str] = Header(None)):
+    if authorization and authorization.startswith("Bearer "):
+        token = authorization.split(" ", 1)[1].strip()
+        with get_db() as conn:
+            conn.execute("DELETE FROM sessions WHERE token = ?", (token,))
+            conn.commit()
+    return {"ok": True}
+
+
+@app.get("/api/auth/me")
+async def me(user=Depends(get_current_user)):
+    return user
+
+
+# ---------- Playlist (tersimpan per akun, bukan lagi localStorage) ----------
+def _playlist_row_to_dict(row):
+    return {"id": row["id"], "name": row["name"], "tracks": json.loads(row["tracks"])}
+
+
+@app.get("/api/playlists")
+async def list_playlists(user=Depends(get_current_user)):
+    with get_db() as conn:
+        rows = conn.execute(
+            "SELECT id, name, tracks FROM playlists WHERE user_id = ? ORDER BY updated_at DESC",
+            (user["id"],),
+        ).fetchall()
+    return {"playlists": [_playlist_row_to_dict(r) for r in rows]}
+
+
+@app.post("/api/playlists")
+async def create_playlist(payload: PlaylistCreate, user=Depends(get_current_user)):
+    playlist_id = f"pl_{secrets.token_hex(8)}"
+    with get_db() as conn:
+        conn.execute(
+            "INSERT INTO playlists (id, user_id, name, tracks, updated_at) VALUES (?, ?, ?, ?, ?)",
+            (playlist_id, user["id"], payload.name.strip(), "[]", _now()),
+        )
+        conn.commit()
+    return {"id": playlist_id, "name": payload.name.strip(), "tracks": []}
+
+
+@app.put("/api/playlists/{playlist_id}")
+async def update_playlist(playlist_id: str, payload: PlaylistUpdate, user=Depends(get_current_user)):
+    with get_db() as conn:
+        row = conn.execute(
+            "SELECT id, name, tracks FROM playlists WHERE id = ? AND user_id = ?",
+            (playlist_id, user["id"]),
+        ).fetchone()
+        if not row:
+            raise HTTPException(status_code=404, detail="Playlist tidak ditemukan")
+        new_name = payload.name.strip() if payload.name is not None else row["name"]
+        new_tracks = json.dumps(payload.tracks) if payload.tracks is not None else row["tracks"]
+        conn.execute(
+            "UPDATE playlists SET name = ?, tracks = ?, updated_at = ? WHERE id = ?",
+            (new_name, new_tracks, _now(), playlist_id),
+        )
+        conn.commit()
+    return {"id": playlist_id, "name": new_name, "tracks": json.loads(new_tracks)}
+
+
+@app.delete("/api/playlists/{playlist_id}")
+async def delete_playlist(playlist_id: str, user=Depends(get_current_user)):
+    with get_db() as conn:
+        row = conn.execute(
+            "SELECT id FROM playlists WHERE id = ? AND user_id = ?", (playlist_id, user["id"])
+        ).fetchone()
+        if not row:
+            raise HTTPException(status_code=404, detail="Playlist tidak ditemukan")
+        conn.execute("DELETE FROM playlists WHERE id = ?", (playlist_id,))
+        conn.commit()
+    return {"ok": True}
 
 
 app.mount("/", StaticFiles(directory="static", html=True), name="static")
