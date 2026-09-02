@@ -55,6 +55,14 @@ YDL_STREAM_OPTS = {
     # WebM/Opus (default lama) TIDAK didukung Safari sama sekali.
     "format": "bestaudio[ext=m4a]/bestaudio[acodec^=mp4a]/bestaudio/best",
     "noplaylist": True,
+    # Client "android"/"ios" biasanya lolos dari pembatasan/PO-token yang makin
+    # sering diterapkan YouTube ke client "web" — kalau satu client gagal,
+    # yt-dlp otomatis coba client berikutnya di daftar ini.
+    "extractor_args": {
+        "youtube": {
+            "player_client": ["android", "ios", "web"],
+        }
+    },
 }
 
 
@@ -143,7 +151,10 @@ async def stream(video_id: str, request: Request):
     if range_header:
         upstream_headers["Range"] = range_header
 
-    client = httpx.AsyncClient(timeout=30.0, follow_redirects=True)
+    client = httpx.AsyncClient(
+        timeout=httpx.Timeout(connect=10.0, read=60.0, write=10.0, pool=10.0),
+        follow_redirects=True,
+    )
     try:
         req = client.build_request("GET", audio_url, headers=upstream_headers)
         upstream_resp = await client.send(req, stream=True)
