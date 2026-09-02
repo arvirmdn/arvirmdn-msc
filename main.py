@@ -1,14 +1,31 @@
 import asyncio
 import functools
 import re
-from typing import Optional
 
-from fastapi import FastAPI, HTTPException, Query
+from fastapi import FastAPI, HTTPException, Query, Request
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import RedirectResponse, StreamingResponse
+from fastapi.responses import StreamingResponse
 from fastapi.staticfiles import StaticFiles
 import httpx
 import yt_dlp
+
+# Header ini WAJIB dikirim ke server audio YouTube (googlevideo.com), kalau tidak
+# sering di-cut/403 di tengah jalan — inilah penyebab audio "mati sendiri".
+BROWSER_HEADERS = {
+    "User-Agent": (
+        "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 "
+        "(KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36"
+    ),
+    "Referer": "https://www.youtube.com/",
+    "Origin": "https://www.youtube.com",
+}
+
+EXT_MIME = {
+    "m4a": "audio/mp4",
+    "mp4": "audio/mp4",
+    "webm": "audio/webm",
+    "opus": "audio/ogg",
+}
 
 app = FastAPI(title="Web Musik - YouTube Auto Search")
 
@@ -34,7 +51,9 @@ YDL_STREAM_OPTS = {
     "quiet": True,
     "no_warnings": True,
     "skip_download": True,
-    "format": "bestaudio/best",
+    # Prioritaskan m4a/AAC: format ini yang bisa diputar di Safari/iPhone.
+    # WebM/Opus (default lama) TIDAK didukung Safari sama sekali.
+    "format": "bestaudio[ext=m4a]/bestaudio[acodec^=mp4a]/bestaudio/best",
     "noplaylist": True,
 }
 
@@ -73,18 +92,28 @@ def _search_youtube(query: str, limit: int = 20):
         return results
 
 
-def _get_audio_url(video_id: str) -> str:
+def _get_audio_stream_info(video_id: str) -> dict:
     with yt_dlp.YoutubeDL(YDL_STREAM_OPTS) as ydl:
         info = ydl.extract_info(f"https://www.youtube.com/watch?v={video_id}", download=False)
         url = info.get("url")
+        ext = info.get("ext") or "m4a"
         if not url:
             formats = info.get("formats") or []
-            audio_formats = [f for f in formats if f.get("acodec") not in (None, "none")]
+            # Audio-only (tanpa video), utamakan m4a demi kompatibilitas iPhone/Safari
+            audio_formats = [
+                f for f in formats
+                if f.get("acodec") not in (None, "none") and f.get("vcodec") in (None, "none")
+            ]
             if not audio_formats:
                 raise RuntimeError("Tidak ada format audio ditemukan")
-            audio_formats.sort(key=lambda f: f.get("abr") or 0, reverse=True)
-            url = audio_formats[0]["url"]
-        return url
+            audio_formats.sort(
+                key=lambda f: (f.get("ext") == "m4a", f.get("abr") or 0),
+                reverse=True,
+            )
+            chosen = audio_formats[0]
+            url = chosen["url"]
+            ext = chosen.get("ext") or "m4a"
+        return {"url": url, "ext": ext}
 
 
 @app.get("/api/search")
@@ -97,22 +126,54 @@ async def search(q: str = Query(..., min_length=1), limit: int = Query(20, ge=1,
 
 
 @app.get("/api/stream/{video_id}")
-async def stream(video_id: str, request: Optional[str] = None):
+async def stream(video_id: str, request: Request):
     if not VIDEO_ID_RE.match(video_id):
         raise HTTPException(status_code=400, detail="video_id tidak valid")
     try:
-        audio_url = await _run_sync(_get_audio_url, video_id)
+        stream_info = await _run_sync(_get_audio_stream_info, video_id)
     except Exception as exc:
         raise HTTPException(status_code=502, detail=f"Gagal mengambil audio: {exc}")
 
-    # Proxy stream-nya lewat backend supaya <audio> di frontend tidak kena blokir/CORS dari googlevideo
-    async def proxy():
-        async with httpx.AsyncClient(timeout=None) as client:
-            async with client.stream("GET", audio_url) as resp:
-                async for chunk in resp.aiter_bytes(chunk_size=65536):
-                    yield chunk
+    audio_url = stream_info["url"]
+    mime = EXT_MIME.get(stream_info["ext"], "audio/mp4")
 
-    return StreamingResponse(proxy(), media_type="audio/webm")
+    upstream_headers = dict(BROWSER_HEADERS)
+    # Teruskan Range request dari <audio> browser (dibutuhkan untuk seek & buffering stabil)
+    range_header = request.headers.get("range")
+    if range_header:
+        upstream_headers["Range"] = range_header
+
+    client = httpx.AsyncClient(timeout=30.0, follow_redirects=True)
+    try:
+        req = client.build_request("GET", audio_url, headers=upstream_headers)
+        upstream_resp = await client.send(req, stream=True)
+    except Exception as exc:
+        await client.aclose()
+        raise HTTPException(status_code=502, detail=f"Gagal konek ke sumber audio: {exc}")
+
+    if upstream_resp.status_code >= 400:
+        await upstream_resp.aclose()
+        await client.aclose()
+        raise HTTPException(
+            status_code=502,
+            detail=f"Sumber audio menolak request (status {upstream_resp.status_code})",
+        )
+
+    resp_headers = {"accept-ranges": "bytes"}
+    for h in ("content-range", "content-length"):
+        if h in upstream_resp.headers:
+            resp_headers[h] = upstream_resp.headers[h]
+
+    async def proxy():
+        try:
+            async for chunk in upstream_resp.aiter_bytes(chunk_size=65536):
+                yield chunk
+        finally:
+            await upstream_resp.aclose()
+            await client.aclose()
+
+    status_code = 206 if range_header and upstream_resp.status_code == 206 else 200
+    return StreamingResponse(proxy(), status_code=status_code, media_type=mime, headers=resp_headers)
 
 
 @app.get("/api/info/{video_id}")
