@@ -57,6 +57,18 @@ Railway **mereset filesystem setiap kali kamu redeploy** kecuali kamu pasang
 Tanpa langkah ini, versi dasar tetap jalan normal untuk development/testing,
 tapi semua akun & playlist akan hilang setiap kali ada deploy baru.
 
+### Foto Profil
+
+User bisa ganti foto profil dari menu Profil (ikon kamera kecil di avatar).
+Server otomatis crop jadi persegi + resize ke 256x256 dan simpan sebagai JPG.
+
+- Format diterima: JPG, PNG, WEBP. Maksimal 5MB.
+- Foto disimpan di folder `avatars/` **sebelahan dengan file database**
+  (`DB_PATH`), jadi kalau kamu sudah pasang Railway Volume untuk database
+  (lihat bagian di atas), foto profil otomatis ikut aman di volume yang sama
+  — tidak perlu setup volume terpisah.
+- Butuh dependency baru: `Pillow` (sudah ditambahkan ke `requirements.txt`).
+
 ## Cara kerja
 
 1. User ketik query di search box → setelah 500ms jeda (debounce), frontend

@@ -1,6 +1,7 @@
 import asyncio
 import functools
 import hashlib
+import io
 import json
 import os
 import re
@@ -11,11 +12,12 @@ from contextlib import contextmanager
 from datetime import datetime, timezone
 from typing import List, Optional
 
-from fastapi import Depends, FastAPI, Header, HTTPException, Query, Request
+from fastapi import Depends, FastAPI, File, Header, HTTPException, Query, Request, UploadFile
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import StreamingResponse
+from fastapi.responses import FileResponse, StreamingResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field
+from PIL import Image, ImageOps
 import httpx
 import yt_dlp
 
@@ -25,6 +27,13 @@ import yt_dlp
 # (mis. DB_PATH=/data/musikin.db). Tanpa volume, akun & playlist akan reset
 # setiap kali kamu push perubahan baru.
 DB_PATH = os.environ.get("DB_PATH", "musikin.db")
+
+# Foto profil disimpan sebagai file JPG di folder ini, sengaja diletakkan
+# bersebelahan dengan file database supaya kalau kamu pasang Railway Volume
+# untuk DB_PATH, foto profil ikut aman di volume yang sama.
+AVATAR_DIR = os.path.join(os.path.dirname(os.path.abspath(DB_PATH)), "avatars")
+MAX_AVATAR_BYTES = 5 * 1024 * 1024
+ALLOWED_AVATAR_TYPES = {"image/jpeg", "image/png", "image/webp"}
 
 
 def _init_db():
@@ -60,6 +69,10 @@ def _init_db():
             )
             """
         )
+        # Migrasi ringan untuk DB lama yang dibuat sebelum fitur foto profil ada.
+        user_cols = [r[1] for r in conn.execute("PRAGMA table_info(users)").fetchall()]
+        if "avatar_version" not in user_cols:
+            conn.execute("ALTER TABLE users ADD COLUMN avatar_version INTEGER DEFAULT 0")
         conn.commit()
 
 
@@ -440,7 +453,12 @@ async def me(user=Depends(get_current_user)):
         row = conn.execute(
             "SELECT COUNT(*) AS n FROM playlists WHERE user_id = ?", (user["id"],)
         ).fetchone()
-    return {**user, "playlist_count": row["n"]}
+        urow = conn.execute(
+            "SELECT avatar_version FROM users WHERE id = ?", (user["id"],)
+        ).fetchone()
+    avatar_version = (urow["avatar_version"] if urow else 0) or 0
+    avatar_url = f"/api/avatar/{user['id']}?v={avatar_version}" if avatar_version else None
+    return {**user, "playlist_count": row["n"], "avatar_url": avatar_url}
 
 
 @app.put("/api/auth/password")
@@ -465,6 +483,71 @@ async def change_password(payload: ChangePasswordRequest, user=Depends(get_curre
         conn.execute("DELETE FROM sessions WHERE user_id = ?", (user["id"],))
         conn.commit()
     return {"ok": True}
+
+
+def _avatar_path(user_id: int) -> str:
+    return os.path.join(AVATAR_DIR, f"{user_id}.jpg")
+
+
+@app.post("/api/auth/avatar")
+async def upload_avatar(file: UploadFile = File(...), user=Depends(get_current_user)):
+    if file.content_type not in ALLOWED_AVATAR_TYPES:
+        raise HTTPException(status_code=400, detail="Format foto harus JPG, PNG, atau WEBP")
+
+    raw = await file.read()
+    if len(raw) > MAX_AVATAR_BYTES:
+        raise HTTPException(status_code=400, detail="Ukuran foto maksimal 5MB")
+
+    try:
+        img = Image.open(io.BytesIO(raw))
+        img = ImageOps.exif_transpose(img)  # perbaiki rotasi foto dari HP
+        img = img.convert("RGB")
+    except Exception:
+        raise HTTPException(status_code=400, detail="File bukan gambar yang valid")
+
+    # Crop jadi persegi (ambil bagian tengah) lalu resize ke 256x256
+    w, h = img.size
+    side = min(w, h)
+    left = (w - side) // 2
+    top = (h - side) // 2
+    img = img.crop((left, top, left + side, top + side)).resize((256, 256), Image.LANCZOS)
+
+    os.makedirs(AVATAR_DIR, exist_ok=True)
+    img.save(_avatar_path(user["id"]), "JPEG", quality=87)
+
+    with get_db() as conn:
+        conn.execute(
+            "UPDATE users SET avatar_version = COALESCE(avatar_version, 0) + 1 WHERE id = ?",
+            (user["id"],),
+        )
+        conn.commit()
+        row = conn.execute(
+            "SELECT avatar_version FROM users WHERE id = ?", (user["id"],)
+        ).fetchone()
+
+    return {"avatar_url": f"/api/avatar/{user['id']}?v={row['avatar_version']}"}
+
+
+@app.delete("/api/auth/avatar")
+async def delete_avatar(user=Depends(get_current_user)):
+    path = _avatar_path(user["id"])
+    if os.path.exists(path):
+        os.remove(path)
+    with get_db() as conn:
+        conn.execute(
+            "UPDATE users SET avatar_version = COALESCE(avatar_version, 0) + 1 WHERE id = ?",
+            (user["id"],),
+        )
+        conn.commit()
+    return {"ok": True}
+
+
+@app.get("/api/avatar/{user_id}")
+async def get_avatar(user_id: int):
+    path = _avatar_path(user_id)
+    if not os.path.exists(path):
+        raise HTTPException(status_code=404, detail="Belum ada foto profil")
+    return FileResponse(path, media_type="image/jpeg")
 
 
 # ---------- Playlist (tersimpan per akun, bukan lagi localStorage) ----------
