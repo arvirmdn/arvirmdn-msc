@@ -110,20 +110,26 @@ class PlaylistUpdate(BaseModel):
     tracks: Optional[List[dict]] = None
 
 
+class ChangePasswordRequest(BaseModel):
+    current_password: str
+    new_password: str
+    confirm_new_password: str
+
+
 def get_current_user(authorization: Optional[str] = Header(None)):
     if not authorization or not authorization.startswith("Bearer "):
         raise HTTPException(status_code=401, detail="Belum login")
     token = authorization.split(" ", 1)[1].strip()
     with get_db() as conn:
         row = conn.execute(
-            "SELECT users.id AS id, users.username AS username "
+            "SELECT users.id AS id, users.username AS username, users.created_at AS created_at "
             "FROM sessions JOIN users ON users.id = sessions.user_id "
             "WHERE sessions.token = ?",
             (token,),
         ).fetchone()
     if not row:
         raise HTTPException(status_code=401, detail="Sesi tidak valid, silakan login lagi")
-    return {"id": row["id"], "username": row["username"]}
+    return {"id": row["id"], "username": row["username"], "created_at": row["created_at"]}
 
 # Header ini WAJIB dikirim ke server audio YouTube (googlevideo.com), kalau tidak
 # sering di-cut/403 di tengah jalan — inilah penyebab audio "mati sendiri".
@@ -430,7 +436,35 @@ async def logout(authorization: Optional[str] = Header(None)):
 
 @app.get("/api/auth/me")
 async def me(user=Depends(get_current_user)):
-    return user
+    with get_db() as conn:
+        row = conn.execute(
+            "SELECT COUNT(*) AS n FROM playlists WHERE user_id = ?", (user["id"],)
+        ).fetchone()
+    return {**user, "playlist_count": row["n"]}
+
+
+@app.put("/api/auth/password")
+async def change_password(payload: ChangePasswordRequest, user=Depends(get_current_user)):
+    if len(payload.new_password) < 6:
+        raise HTTPException(status_code=400, detail="Kata sandi baru minimal 6 karakter")
+    if payload.new_password != payload.confirm_new_password:
+        raise HTTPException(status_code=400, detail="Konfirmasi kata sandi baru tidak cocok")
+    with get_db() as conn:
+        row = conn.execute(
+            "SELECT password_hash, salt FROM users WHERE id = ?", (user["id"],)
+        ).fetchone()
+        check_hash, _ = _hash_password(payload.current_password, row["salt"])
+        if not secrets.compare_digest(check_hash, row["password_hash"]):
+            raise HTTPException(status_code=401, detail="Kata sandi saat ini salah")
+        new_hash, new_salt = _hash_password(payload.new_password)
+        conn.execute(
+            "UPDATE users SET password_hash = ?, salt = ? WHERE id = ?",
+            (new_hash, new_salt, user["id"]),
+        )
+        # Sekalian putus semua sesi lain demi keamanan, kecuali biarkan yang ini tetap harus login ulang juga
+        conn.execute("DELETE FROM sessions WHERE user_id = ?", (user["id"],))
+        conn.commit()
+    return {"ok": True}
 
 
 # ---------- Playlist (tersimpan per akun, bukan lagi localStorage) ----------
