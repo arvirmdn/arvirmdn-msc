@@ -233,6 +233,47 @@ audio.addEventListener("ended", () => {
   }
 });
 
+audio.addEventListener("stalled", () => {
+  statusRow.textContent = "Koneksi audio tersendat, coba tunggu sebentar...";
+});
+
+audio.addEventListener("waiting", () => {
+  statusRow.textContent = "Memuat audio...";
+});
+
+audio.addEventListener("playing", () => {
+  if (statusRow.textContent.startsWith("Memuat") || statusRow.textContent.startsWith("Koneksi")) {
+    statusRow.textContent = "";
+  }
+});
+
+let errorRetryCount = 0;
+audio.addEventListener("error", () => {
+  console.error("Audio error:", audio.error);
+  setPlayingUI(false);
+  const track = currentQueue[currentIndex];
+  const label = track ? `"${track.title}"` : "lagu ini";
+
+  if (errorRetryCount < 1) {
+    // Kadang gagal sekali karena URL upstream keburu basi — coba re-fetch sekali.
+    errorRetryCount++;
+    statusRow.textContent = `Gagal muter ${label}, mencoba ulang...`;
+    const retryTrack = currentQueue[currentIndex];
+    setTimeout(() => {
+      if (retryTrack) {
+        audio.src = `${API_BASE}/api/stream/${retryTrack.id}?retry=${Date.now()}`;
+        audio.play().catch(() => {});
+      }
+    }, 600);
+    return;
+  }
+
+  errorRetryCount = 0;
+  statusRow.textContent = `Gagal muter ${label}. Kemungkinan diblokir/dibatasi YouTube — coba lagu lain atau cek log server.`;
+});
+
+audio.addEventListener("play", () => { errorRetryCount = 0; });
+
 audio.addEventListener("timeupdate", () => {
   if (!isNaN(audio.duration)) {
     seekBar.value = (audio.currentTime / audio.duration) * 100;
