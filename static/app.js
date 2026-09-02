@@ -114,7 +114,7 @@ searchInput.addEventListener("keydown", (e) => {
 });
 
 async function doSearch(query) {
-  statusRow.textContent = "Mencari di YouTube...";
+  statusRow.textContent = "Mencari...";
   resultList.innerHTML = "";
   try {
     const res = await fetch(`${API_BASE}/api/search?q=${encodeURIComponent(query)}`);
@@ -329,7 +329,7 @@ audio.addEventListener("error", () => {
   }
 
   errorRetryCount = 0;
-  statusRow.textContent = `Gagal muter ${label}. Kemungkinan diblokir/dibatasi YouTube — coba lagu lain atau cek log server.`;
+  statusRow.textContent = `Gagal muter ${label}. Kemungkinan sumbernya diblokir/dibatasi — coba lagu lain atau cek log server.`;
 });
 
 audio.addEventListener("play", () => { errorRetryCount = 0; });
