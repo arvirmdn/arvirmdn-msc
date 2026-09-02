@@ -66,11 +66,191 @@ const addModalList = document.getElementById("addModalList");
 const addModalNewBtn = document.getElementById("addModalNewBtn");
 const addModalDone = document.getElementById("addModalDone");
 
+// ---------- Auth (Masuk / Daftar) ----------
+const AUTH_TOKEN_KEY = "musikin_token";
+const AUTH_USERNAME_KEY = "musikin_username";
+
+const authScreen = document.getElementById("authScreen");
+const authTabLogin = document.getElementById("authTabLogin");
+const authTabRegister = document.getElementById("authTabRegister");
+const authTitleEl = document.getElementById("authTitle");
+const authSubtitleEl = document.getElementById("authSubtitle");
+const authConfirmField = document.getElementById("authConfirmField");
+const authUsernameInput = document.getElementById("authUsername");
+const authPasswordInput = document.getElementById("authPassword");
+const authConfirmPasswordInput = document.getElementById("authConfirmPassword");
+const authErrorEl = document.getElementById("authError");
+const authSubmitBtn = document.getElementById("authSubmitBtn");
+const authSubmitLabel = document.getElementById("authSubmitLabel");
+const authPasswordEye = document.getElementById("authPasswordEye");
+const authConfirmEye = document.getElementById("authConfirmEye");
+const logoutBtn = document.getElementById("logoutBtn");
+
+let authMode = "login"; // 'login' | 'register'
+
+function getToken() {
+  return localStorage.getItem(AUTH_TOKEN_KEY);
+}
+
+function setAuth(token, username) {
+  localStorage.setItem(AUTH_TOKEN_KEY, token);
+  localStorage.setItem(AUTH_USERNAME_KEY, username);
+}
+
+function clearAuth() {
+  localStorage.removeItem(AUTH_TOKEN_KEY);
+  localStorage.removeItem(AUTH_USERNAME_KEY);
+}
+
+function authHeaders(extra = {}) {
+  const token = getToken();
+  return token ? { ...extra, Authorization: `Bearer ${token}` } : extra;
+}
+
+function setAuthMode(mode) {
+  authMode = mode;
+  authErrorEl.style.display = "none";
+  authTabLogin.classList.toggle("active", mode === "login");
+  authTabRegister.classList.toggle("active", mode === "register");
+  authConfirmField.style.display = mode === "register" ? "block" : "none";
+  authTitleEl.textContent = mode === "login" ? "Masuk ke Musikin" : "Buat Akun Baru";
+  authSubtitleEl.textContent =
+    mode === "login" ? "Playlist kamu tersimpan aman di akunmu" : "Daftar biar playlist kamu tidak hilang";
+  authSubmitLabel.textContent = mode === "login" ? "Masuk" : "Daftar Sekarang";
+}
+
+authTabLogin.addEventListener("click", () => setAuthMode("login"));
+authTabRegister.addEventListener("click", () => setAuthMode("register"));
+
+function togglePasswordEye(input, btn) {
+  const showing = input.type === "password";
+  input.type = showing ? "text" : "password";
+  btn.classList.toggle("active", showing);
+}
+authPasswordEye.addEventListener("click", () => togglePasswordEye(authPasswordInput, authPasswordEye));
+authConfirmEye.addEventListener("click", () => togglePasswordEye(authConfirmPasswordInput, authConfirmEye));
+
+function showAuthError(msg) {
+  authErrorEl.textContent = msg;
+  authErrorEl.style.display = "block";
+}
+
+function showAuthScreen() {
+  authScreen.classList.remove("hidden");
+}
+
+async function enterApp() {
+  authScreen.classList.add("hidden");
+  await loadPlaylistsFromServer();
+}
+
+async function loadPlaylistsFromServer() {
+  try {
+    const res = await fetch(`${API_BASE}/api/playlists`, { headers: authHeaders() });
+    if (res.status === 401) {
+      clearAuth();
+      showAuthScreen();
+      return;
+    }
+    const data = await res.json();
+    playlists = data.playlists || [];
+    renderPlaylists();
+    if (activePlaylistId) renderPlaylistDetail();
+  } catch (err) {
+    console.error("Gagal memuat playlist dari server:", err);
+  }
+}
+
+async function submitAuth() {
+  const username = authUsernameInput.value.trim();
+  const password = authPasswordInput.value;
+  if (!username || !password) {
+    showAuthError("Nama pengguna dan kata sandi wajib diisi.");
+    return;
+  }
+  authSubmitBtn.disabled = true;
+  authErrorEl.style.display = "none";
+  try {
+    let res;
+    if (authMode === "login") {
+      res = await fetch(`${API_BASE}/api/auth/login`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ username, password }),
+      });
+    } else {
+      res = await fetch(`${API_BASE}/api/auth/register`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          username,
+          password,
+          confirm_password: authConfirmPasswordInput.value,
+        }),
+      });
+    }
+    const data = await res.json();
+    if (!res.ok) {
+      showAuthError(data.detail || "Terjadi kesalahan, coba lagi.");
+      return;
+    }
+    setAuth(data.token, data.username);
+    authUsernameInput.value = "";
+    authPasswordInput.value = "";
+    authConfirmPasswordInput.value = "";
+    await enterApp();
+  } catch (err) {
+    console.error(err);
+    showAuthError("Tidak bisa menghubungi server. Coba lagi.");
+  } finally {
+    authSubmitBtn.disabled = false;
+  }
+}
+
+authSubmitBtn.addEventListener("click", submitAuth);
+[authUsernameInput, authPasswordInput, authConfirmPasswordInput].forEach((el) => {
+  el.addEventListener("keydown", (e) => {
+    if (e.key === "Enter") submitAuth();
+  });
+});
+
+logoutBtn.addEventListener("click", async () => {
+  try {
+    await fetch(`${API_BASE}/api/auth/logout`, { method: "POST", headers: authHeaders() });
+  } catch (err) {
+    // abaikan, tetap logout di sisi klien
+  }
+  clearAuth();
+  playlists = [];
+  renderPlaylists();
+  showAuthScreen();
+});
+
+// Cek sesi tersimpan waktu app dibuka
+(async function initAuth() {
+  const token = getToken();
+  if (!token) {
+    showAuthScreen();
+    return;
+  }
+  try {
+    const res = await fetch(`${API_BASE}/api/auth/me`, { headers: authHeaders() });
+    if (!res.ok) {
+      clearAuth();
+      showAuthScreen();
+      return;
+    }
+    await enterApp();
+  } catch (err) {
+    showAuthScreen();
+  }
+})();
+
 let currentQueue = [];
 let currentIndex = -1;
 let searchTimer = null;
 let history = JSON.parse(localStorage.getItem("musikin_history") || "[]");
-let playlists = JSON.parse(localStorage.getItem("musikin_playlists") || "[]");
+let playlists = []; // dimuat dari server setelah login, lihat loadPlaylistsFromServer()
 let activePlaylistId = null;
 let addModalTrack = null;
 let nameModalMode = null; // 'create' | 'createAndAdd' | 'rename'
@@ -372,13 +552,34 @@ sheetHandle.addEventListener("touchmove", (e) => {
 sheetHandle.addEventListener("touchend", () => { dragStartY = null; });
 sheetHandle.addEventListener("click", () => playerSheet.classList.remove("open"));
 
-// ---------- Playlist ----------
-function genId() {
-  return `pl_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`;
+// ---------- Playlist (disimpan di server, terikat ke akun) ----------
+async function apiCreatePlaylist(name) {
+  const res = await fetch(`${API_BASE}/api/playlists`, {
+    method: "POST",
+    headers: authHeaders({ "Content-Type": "application/json" }),
+    body: JSON.stringify({ name }),
+  });
+  if (!res.ok) throw new Error("Gagal membuat playlist");
+  return res.json();
 }
 
-function savePlaylists() {
-  localStorage.setItem("musikin_playlists", JSON.stringify(playlists));
+async function apiUpdatePlaylist(id, patch) {
+  const res = await fetch(`${API_BASE}/api/playlists/${id}`, {
+    method: "PUT",
+    headers: authHeaders({ "Content-Type": "application/json" }),
+    body: JSON.stringify(patch),
+  });
+  if (!res.ok) throw new Error("Gagal memperbarui playlist");
+  return res.json();
+}
+
+async function apiDeletePlaylist(id) {
+  const res = await fetch(`${API_BASE}/api/playlists/${id}`, {
+    method: "DELETE",
+    headers: authHeaders(),
+  });
+  if (!res.ok) throw new Error("Gagal menghapus playlist");
+  return res.json();
 }
 
 function renderPlaylists() {
@@ -422,13 +623,18 @@ function renderPlaylistDetail() {
   highlightPlayingRow();
 }
 
-function removeFromPlaylist(playlistId, trackId) {
+async function removeFromPlaylist(playlistId, trackId) {
   const pl = playlists.find((p) => p.id === playlistId);
   if (!pl) return;
-  pl.tracks = pl.tracks.filter((t) => t.id !== trackId);
-  savePlaylists();
+  const newTracks = pl.tracks.filter((t) => t.id !== trackId);
+  pl.tracks = newTracks; // optimistic
   renderPlaylistDetail();
   renderPlaylists();
+  try {
+    await apiUpdatePlaylist(playlistId, { tracks: newTracks });
+  } catch (err) {
+    console.error(err);
+  }
 }
 
 playlistBackBtn.addEventListener("click", () => playlistDetail.classList.remove("open"));
@@ -459,31 +665,46 @@ nameModalOverlay.addEventListener("click", (e) => {
   if (e.target === nameModalOverlay) closeNameModal();
 });
 
-nameModalSave.addEventListener("click", () => {
+nameModalSave.addEventListener("click", async () => {
   const name = nameModalInput.value.trim();
   if (!name) return;
+  nameModalSave.disabled = true;
 
-  if (nameModalMode === "create" || nameModalMode === "createAndAdd") {
-    const pl = {
-      id: genId(),
-      name,
-      tracks: nameModalMode === "createAndAdd" && addModalTrack ? [addModalTrack] : [],
-    };
-    playlists.unshift(pl);
-    savePlaylists();
-    renderPlaylists();
-    if (nameModalMode === "createAndAdd") renderAddModalList();
-  } else if (nameModalMode === "rename") {
-    const pl = playlists.find((p) => p.id === activePlaylistId);
-    if (pl) {
-      pl.name = name;
-      savePlaylists();
-      renderPlaylistDetail();
+  try {
+    if (nameModalMode === "create" || nameModalMode === "createAndAdd") {
+      const created = await apiCreatePlaylist(name);
+      if (nameModalMode === "createAndAdd" && addModalTrack) {
+        created.tracks = [addModalTrack];
+        await apiUpdatePlaylist(created.id, { tracks: created.tracks });
+      }
+      playlists.unshift(created);
       renderPlaylists();
+      if (nameModalMode === "createAndAdd") renderAddModalList();
+    } else if (nameModalMode === "rename") {
+      const pl = playlists.find((p) => p.id === activePlaylistId);
+      if (pl) {
+        await apiUpdatePlaylist(pl.id, { name });
+        pl.name = name;
+        renderPlaylistDetail();
+        renderPlaylists();
+      }
     }
+    closeNameModal();
+  } catch (err) {
+    console.error(err);
+    showAuthErrorFallback("Gagal menyimpan playlist. Coba lagi.");
+  } finally {
+    nameModalSave.disabled = false;
   }
-  closeNameModal();
 });
+
+// Fallback pesan error kecil kalau aksi playlist gagal (mis. koneksi putus)
+function showAuthErrorFallback(msg) {
+  statusRow.textContent = msg;
+  setTimeout(() => {
+    if (statusRow.textContent === msg) statusRow.textContent = "";
+  }, 3000);
+}
 
 nameModalInput.addEventListener("keydown", (e) => {
   if (e.key === "Enter") nameModalSave.click();
@@ -521,19 +742,22 @@ function renderAddModalList() {
   });
 }
 
-function toggleTrackInPlaylist(playlistId) {
+async function toggleTrackInPlaylist(playlistId) {
   const pl = playlists.find((p) => p.id === playlistId);
   if (!pl || !addModalTrack) return;
   const exists = pl.tracks.some((t) => t.id === addModalTrack.id);
-  if (exists) {
-    pl.tracks = pl.tracks.filter((t) => t.id !== addModalTrack.id);
-  } else {
-    pl.tracks.unshift(addModalTrack);
-  }
-  savePlaylists();
+  const newTracks = exists
+    ? pl.tracks.filter((t) => t.id !== addModalTrack.id)
+    : [addModalTrack, ...pl.tracks];
+  pl.tracks = newTracks; // optimistic
   renderAddModalList();
   renderPlaylists();
   if (activePlaylistId === playlistId) renderPlaylistDetail();
+  try {
+    await apiUpdatePlaylist(playlistId, { tracks: newTracks });
+  } catch (err) {
+    console.error(err);
+  }
 }
 
 addModalNewBtn.addEventListener("click", () => openNameModal("createAndAdd", ""));
