@@ -1,42 +1,55 @@
-const API_BASE = ""; // sameorigin; ganti misal "https://api-musikmu.up.railway.app" kalau backend beda domain
+const API_BASE = ""; // sameorigin; ganti kalau backend beda domain dari frontend
 
 const searchInput = document.getElementById("searchInput");
-const searchBtn = document.getElementById("searchBtn");
-const statusEl = document.getElementById("status");
+const statusRow = document.getElementById("statusRow");
 const resultList = document.getElementById("resultList");
 const historyList = document.getElementById("historyList");
+const emptyState = document.getElementById("emptyState");
 
 const audio = document.getElementById("audioPlayer");
-const playBtn = document.getElementById("playBtn");
-const prevBtn = document.getElementById("prevBtn");
-const nextBtn = document.getElementById("nextBtn");
+
+// Mini player
+const miniPlayer = document.getElementById("miniPlayer");
+const miniThumb = document.getElementById("miniThumb");
+const miniTitle = document.getElementById("miniTitle");
+const miniArtist = document.getElementById("miniArtist");
+const miniPlayPause = document.getElementById("miniPlayPause");
+const miniPlayIcon = document.getElementById("miniPlayIcon");
+const miniPauseIcon = document.getElementById("miniPauseIcon");
+
+// Full sheet
+const playerSheet = document.getElementById("playerSheet");
+const sheetHandle = document.getElementById("sheetHandle");
+const sheetThumb = document.getElementById("sheetThumb");
+const sheetTitle = document.getElementById("sheetTitle");
+const sheetArtist = document.getElementById("sheetArtist");
 const seekBar = document.getElementById("seekBar");
 const curTimeEl = document.getElementById("curTime");
 const durTimeEl = document.getElementById("durTime");
 const volumeBar = document.getElementById("volumeBar");
+const playBtn = document.getElementById("playBtn");
+const playIcon = document.getElementById("playIcon");
+const pauseIcon = document.getElementById("pauseIcon");
+const prevBtn = document.getElementById("prevBtn");
+const nextBtn = document.getElementById("nextBtn");
 
-const playerThumb = document.getElementById("playerThumb");
-const playerTitle = document.getElementById("playerTitle");
-const playerArtist = document.getElementById("playerArtist");
-
-const navItems = document.querySelectorAll(".nav-item");
-const views = document.querySelectorAll(".view");
+const navBtns = document.querySelectorAll(".nav-btn");
+const panels = document.querySelectorAll(".panel");
 
 let currentQueue = [];
 let currentIndex = -1;
 let searchTimer = null;
 let history = JSON.parse(localStorage.getItem("musikin_history") || "[]");
 
-// ---------- Navigasi tab ----------
-navItems.forEach((item) => {
-  item.addEventListener("click", (e) => {
-    e.preventDefault();
-    navItems.forEach((i) => i.classList.remove("active"));
-    item.classList.add("active");
-    const target = item.dataset.view;
-    views.forEach((v) => v.classList.remove("active"));
-    document.getElementById(target + "View").classList.add("active");
-    if (target === "library") renderHistory();
+// ---------- Bottom nav ----------
+navBtns.forEach((btn) => {
+  btn.addEventListener("click", () => {
+    navBtns.forEach((b) => b.classList.remove("active"));
+    btn.classList.add("active");
+    const target = btn.dataset.view;
+    panels.forEach((p) => p.classList.remove("active"));
+    document.getElementById(target).classList.add("active");
+    if (target === "libraryView") renderHistory();
   });
 });
 
@@ -46,16 +59,12 @@ searchInput.addEventListener("input", () => {
   const q = searchInput.value.trim();
   if (!q) {
     resultList.innerHTML = "";
-    statusEl.textContent = "";
+    statusRow.textContent = "";
+    emptyState.style.display = "flex";
     return;
   }
-  statusEl.textContent = "Mengetik...";
+  statusRow.textContent = "Mengetik...";
   searchTimer = setTimeout(() => doSearch(q), 500);
-});
-
-searchBtn.addEventListener("click", () => {
-  const q = searchInput.value.trim();
-  if (q) doSearch(q);
 });
 
 searchInput.addEventListener("keydown", (e) => {
@@ -67,7 +76,7 @@ searchInput.addEventListener("keydown", (e) => {
 });
 
 async function doSearch(query) {
-  statusEl.textContent = "Mencari di YouTube...";
+  statusRow.textContent = "Mencari di YouTube...";
   resultList.innerHTML = "";
   try {
     const res = await fetch(`${API_BASE}/api/search?q=${encodeURIComponent(query)}`);
@@ -75,13 +84,16 @@ async function doSearch(query) {
     const data = await res.json();
     currentQueue = data.results;
     if (!currentQueue.length) {
-      statusEl.textContent = "Tidak ada hasil.";
+      statusRow.textContent = "Tidak ada hasil.";
+      emptyState.style.display = "flex";
       return;
     }
-    statusEl.textContent = `${currentQueue.length} hasil untuk "${query}"`;
+    statusRow.textContent = `${currentQueue.length} hasil untuk "${query}"`;
+    emptyState.style.display = "none";
     renderResults(currentQueue);
   } catch (err) {
-    statusEl.textContent = "Terjadi kesalahan saat mencari. Coba lagi.";
+    statusRow.textContent = "Terjadi kesalahan saat mencari. Coba lagi.";
+    emptyState.style.display = "flex";
     console.error(err);
   }
 }
@@ -89,11 +101,12 @@ async function doSearch(query) {
 function renderResults(tracks) {
   resultList.innerHTML = "";
   tracks.forEach((track, idx) => {
-    resultList.appendChild(buildTrackItem(track, idx));
+    resultList.appendChild(buildTrackItem(track, () => playTrack(idx, currentQueue)));
   });
+  highlightPlayingRow();
 }
 
-function buildTrackItem(track, idx) {
+function buildTrackItem(track, onClick) {
   const li = document.createElement("li");
   li.className = "track-item";
   li.dataset.id = track.id;
@@ -103,9 +116,10 @@ function buildTrackItem(track, idx) {
       <div class="track-title">${escapeHtml(track.title)}</div>
       <div class="track-artist">${escapeHtml(track.artist || "")}</div>
     </div>
+    <div class="row-eq" style="display:none"><span></span><span></span><span></span></div>
     <div class="track-duration">${formatDuration(track.duration)}</div>
   `;
-  li.addEventListener("click", () => playTrack(idx, currentQueue));
+  li.addEventListener("click", onClick);
   return li;
 }
 
@@ -132,18 +146,38 @@ function playTrack(index, queue) {
   audio.src = `${API_BASE}/api/stream/${track.id}`;
   audio.play().catch((e) => console.error("Gagal memutar:", e));
 
-  playerThumb.src = track.thumbnail || "";
-  playerTitle.textContent = track.title;
-  playerArtist.textContent = track.artist || "";
-  playBtn.textContent = "⏸";
-
-  highlightPlaying(track.id);
+  updateMeta(track);
+  setPlayingUI(true);
+  highlightPlayingRow();
   addToHistory(track);
 }
 
-function highlightPlaying(id) {
+function updateMeta(track) {
+  miniThumb.src = track.thumbnail || "";
+  miniTitle.textContent = track.title;
+  miniArtist.textContent = track.artist || "";
+  sheetThumb.src = track.thumbnail || "";
+  sheetTitle.textContent = track.title;
+  sheetArtist.textContent = track.artist || "";
+}
+
+function setPlayingUI(isPlaying) {
+  miniPlayer.classList.toggle("playing", isPlaying);
+  miniPlayIcon.style.display = isPlaying ? "none" : "block";
+  miniPauseIcon.style.display = isPlaying ? "block" : "none";
+  playIcon.style.display = isPlaying ? "none" : "block";
+  pauseIcon.style.display = isPlaying ? "block" : "none";
+}
+
+function highlightPlayingRow() {
+  const currentId = currentQueue[currentIndex]?.id;
   document.querySelectorAll(".track-item").forEach((el) => {
-    el.classList.toggle("playing", el.dataset.id === id);
+    const isPlaying = el.dataset.id === currentId;
+    el.classList.toggle("playing", isPlaying);
+    const eq = el.querySelector(".row-eq");
+    const dur = el.querySelector(".track-duration");
+    if (eq) eq.style.display = isPlaying && !audio.paused ? "flex" : "none";
+    if (dur) dur.style.display = isPlaying && !audio.paused ? "none" : "block";
   });
 }
 
@@ -157,26 +191,33 @@ function addToHistory(track) {
 function renderHistory() {
   historyList.innerHTML = "";
   if (!history.length) {
-    historyList.innerHTML = '<div class="status">Belum ada lagu yang diputar.</div>';
+    historyList.innerHTML = '<div class="empty-state" style="display:flex"><p>Belum ada lagu yang diputar.</p></div>';
     return;
   }
   history.forEach((track, idx) => {
-    const li = buildTrackItem(track, idx);
-    li.addEventListener("click", () => playTrack(idx, history));
-    historyList.appendChild(li);
+    historyList.appendChild(buildTrackItem(track, () => playTrack(idx, history)));
   });
+  highlightPlayingRow();
 }
 
-playBtn.addEventListener("click", () => {
+// ---------- Play/pause ----------
+function togglePlay() {
   if (!audio.src) return;
   if (audio.paused) {
     audio.play();
-    playBtn.textContent = "⏸";
   } else {
     audio.pause();
-    playBtn.textContent = "▶";
   }
+}
+
+miniPlayPause.addEventListener("click", (e) => {
+  e.stopPropagation();
+  togglePlay();
 });
+playBtn.addEventListener("click", togglePlay);
+
+audio.addEventListener("play", () => { setPlayingUI(true); highlightPlayingRow(); });
+audio.addEventListener("pause", () => { setPlayingUI(false); highlightPlayingRow(); });
 
 prevBtn.addEventListener("click", () => {
   if (currentIndex > 0) playTrack(currentIndex - 1, currentQueue);
@@ -189,8 +230,6 @@ nextBtn.addEventListener("click", () => {
 audio.addEventListener("ended", () => {
   if (currentIndex < currentQueue.length - 1) {
     playTrack(currentIndex + 1, currentQueue);
-  } else {
-    playBtn.textContent = "▶";
   }
 });
 
@@ -212,3 +251,22 @@ volumeBar.addEventListener("input", () => {
   audio.volume = volumeBar.value / 100;
 });
 audio.volume = 0.8;
+
+// ---------- Full player sheet open/close ----------
+miniPlayer.addEventListener("click", () => {
+  if (!audio.src) return;
+  playerSheet.classList.add("open");
+});
+
+let dragStartY = null;
+sheetHandle.addEventListener("touchstart", (e) => { dragStartY = e.touches[0].clientY; }, { passive: true });
+sheetHandle.addEventListener("touchmove", (e) => {
+  if (dragStartY === null) return;
+  const dy = e.touches[0].clientY - dragStartY;
+  if (dy > 60) {
+    playerSheet.classList.remove("open");
+    dragStartY = null;
+  }
+}, { passive: true });
+sheetHandle.addEventListener("touchend", () => { dragStartY = null; });
+sheetHandle.addEventListener("click", () => playerSheet.classList.remove("open"));
