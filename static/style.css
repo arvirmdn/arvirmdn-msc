@@ -15,6 +15,22 @@
   --nav-h: 62px;
 }
 
+/* ---------- Tema terang, otomatis ikut pengaturan perangkat ---------- */
+@media (prefers-color-scheme: light) {
+  :root {
+    --bg: #f5f6f8;
+    --surface: #ffffff;
+    --surface-2: #eceef1;
+    --border: rgba(0, 0, 0, 0.08);
+    --accent: #16b57a;
+    --accent-dim: rgba(22, 181, 122, 0.12);
+    --accent-2: #e0424f;
+    --text: #14161a;
+    --text-dim: #5a5e66;
+    --text-faint: #8a8e96;
+  }
+}
+
 * { box-sizing: border-box; margin: 0; padding: 0; -webkit-tap-highlight-color: transparent; }
 
 html, body {
