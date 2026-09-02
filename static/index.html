@@ -12,7 +12,7 @@
 </head>
 <body>
 
-  <div class="app">
+  <div class="app" id="appRoot">
 
     <!-- ===== HOME / SEARCH SCREEN ===== -->
     <main class="screen" id="mainScreen">
@@ -43,6 +43,17 @@
         <h2 class="panel-title">Baru diputar</h2>
         <ul id="historyList" class="track-list"></ul>
       </section>
+
+      <section id="playlistView" class="panel">
+        <div class="panel-head">
+          <h2 class="panel-title">Playlist kamu</h2>
+          <button id="createPlaylistBtn" class="pill-btn">+ Playlist</button>
+        </div>
+        <div id="playlistGrid" class="playlist-grid"></div>
+        <div id="playlistEmptyState" class="empty-state">
+          <p>Belum ada playlist. Bikin dulu biar bisa kumpulin lagu favorit.</p>
+        </div>
+      </section>
     </main>
 
     <!-- ===== MINI PLAYER ===== -->
@@ -68,6 +79,10 @@
       <button class="nav-btn" data-view="libraryView">
         <svg width="22" height="22" viewBox="0 0 24 24" fill="none"><rect x="3" y="4" width="18" height="4" rx="1" stroke="currentColor" stroke-width="2"/><rect x="3" y="11" width="18" height="4" rx="1" stroke="currentColor" stroke-width="2"/><rect x="3" y="18" width="12" height="2.5" rx="1" stroke="currentColor" stroke-width="2"/></svg>
         <span>Riwayat</span>
+      </button>
+      <button class="nav-btn" data-view="playlistView">
+        <svg width="22" height="22" viewBox="0 0 24 24" fill="none"><path d="M4 6h10M4 12h10M4 18h6" stroke="currentColor" stroke-width="2" stroke-linecap="round"/><circle cx="18" cy="16.5" r="2.7" stroke="currentColor" stroke-width="2"/><path d="M20.7 16.5V6.5l-3.2 1" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></svg>
+        <span>Playlist</span>
       </button>
     </nav>
 
@@ -115,6 +130,50 @@
       <div class="volume-row">
         <svg width="18" height="18" viewBox="0 0 24 24" fill="currentColor"><path d="M4 9v6h4l5 5V4L8 9H4Z"/></svg>
         <input id="volumeBar" class="volume" type="range" min="0" max="100" value="80">
+      </div>
+    </div>
+  </div>
+
+  <!-- ===== PLAYLIST DETAIL OVERLAY ===== -->
+  <div class="playlist-detail" id="playlistDetail">
+    <div class="detail-topbar">
+      <button id="playlistBackBtn" class="icon-btn" aria-label="Kembali">
+        <svg width="22" height="22" viewBox="0 0 24 24" fill="none"><path d="M15 5 8 12l7 7" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"/></svg>
+      </button>
+      <div class="detail-title-wrap">
+        <h2 id="playlistDetailName" class="detail-title">Playlist</h2>
+        <span id="playlistDetailCount" class="detail-count">0 lagu</span>
+      </div>
+      <button id="playlistRenameBtn" class="icon-btn" aria-label="Ubah nama playlist">
+        <svg width="19" height="19" viewBox="0 0 24 24" fill="none"><path d="M4 20h4L18 10l-4-4L4 16v4Z" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></svg>
+      </button>
+    </div>
+    <ul id="playlistDetailList" class="track-list detail-list"></ul>
+    <div id="playlistDetailEmpty" class="empty-state">
+      <p>Playlist ini masih kosong. Tambahin lagu lewat tombol + di daftar lagu.</p>
+    </div>
+  </div>
+
+  <!-- ===== MODAL: NAMA PLAYLIST (buat / ubah nama) ===== -->
+  <div class="modal-overlay" id="nameModalOverlay">
+    <div class="modal-sheet">
+      <h3 id="nameModalTitle" class="modal-title">Playlist Baru</h3>
+      <input id="nameModalInput" class="modal-input" type="text" placeholder="Nama playlist" maxlength="60" autocomplete="off">
+      <div class="modal-actions">
+        <button id="nameModalCancel" class="modal-btn ghost">Batal</button>
+        <button id="nameModalSave" class="modal-btn primary">Simpan</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- ===== MODAL: TAMBAH KE PLAYLIST ===== -->
+  <div class="modal-overlay" id="addModalOverlay">
+    <div class="modal-sheet">
+      <h3 class="modal-title">Tambah ke Playlist</h3>
+      <ul id="addModalList" class="playlist-pick-list"></ul>
+      <button id="addModalNewBtn" class="modal-new-btn">+ Buat playlist baru</button>
+      <div class="modal-actions">
+        <button id="addModalDone" class="modal-btn primary">Selesai</button>
       </div>
     </div>
   </div>

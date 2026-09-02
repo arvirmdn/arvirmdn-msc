@@ -35,11 +35,39 @@ const nextBtn = document.getElementById("nextBtn");
 
 const navBtns = document.querySelectorAll(".nav-btn");
 const panels = document.querySelectorAll(".panel");
+const appRoot = document.getElementById("appRoot");
+
+// Playlist elements
+const createPlaylistBtn = document.getElementById("createPlaylistBtn");
+const playlistGrid = document.getElementById("playlistGrid");
+const playlistEmptyState = document.getElementById("playlistEmptyState");
+const playlistDetail = document.getElementById("playlistDetail");
+const playlistBackBtn = document.getElementById("playlistBackBtn");
+const playlistRenameBtn = document.getElementById("playlistRenameBtn");
+const playlistDetailName = document.getElementById("playlistDetailName");
+const playlistDetailCount = document.getElementById("playlistDetailCount");
+const playlistDetailList = document.getElementById("playlistDetailList");
+const playlistDetailEmpty = document.getElementById("playlistDetailEmpty");
+
+const nameModalOverlay = document.getElementById("nameModalOverlay");
+const nameModalTitle = document.getElementById("nameModalTitle");
+const nameModalInput = document.getElementById("nameModalInput");
+const nameModalCancel = document.getElementById("nameModalCancel");
+const nameModalSave = document.getElementById("nameModalSave");
+
+const addModalOverlay = document.getElementById("addModalOverlay");
+const addModalList = document.getElementById("addModalList");
+const addModalNewBtn = document.getElementById("addModalNewBtn");
+const addModalDone = document.getElementById("addModalDone");
 
 let currentQueue = [];
 let currentIndex = -1;
 let searchTimer = null;
 let history = JSON.parse(localStorage.getItem("musikin_history") || "[]");
+let playlists = JSON.parse(localStorage.getItem("musikin_playlists") || "[]");
+let activePlaylistId = null;
+let addModalTrack = null;
+let nameModalMode = null; // 'create' | 'createAndAdd' | 'rename'
 
 // ---------- Bottom nav ----------
 navBtns.forEach((btn) => {
@@ -50,6 +78,7 @@ navBtns.forEach((btn) => {
     panels.forEach((p) => p.classList.remove("active"));
     document.getElementById(target).classList.add("active");
     if (target === "libraryView") renderHistory();
+    if (target === "playlistView") renderPlaylists();
   });
 });
 
@@ -106,10 +135,17 @@ function renderResults(tracks) {
   highlightPlayingRow();
 }
 
-function buildTrackItem(track, onClick) {
+function buildTrackItem(track, onClick, options = {}) {
+  const { mode = "add", onAction = null } = options;
   const li = document.createElement("li");
   li.className = "track-item";
   li.dataset.id = track.id;
+  const actionBtn = mode === "none" ? "" : `
+    <button class="track-action ${mode}" aria-label="${mode === "add" ? "Tambah ke playlist" : "Hapus dari playlist"}">
+      ${mode === "add"
+        ? '<svg width="16" height="16" viewBox="0 0 24 24" fill="none"><path d="M12 5v14M5 12h14" stroke="currentColor" stroke-width="2.4" stroke-linecap="round"/></svg>'
+        : '<svg width="16" height="16" viewBox="0 0 24 24" fill="none"><path d="M6 6l12 12M18 6L6 18" stroke="currentColor" stroke-width="2.4" stroke-linecap="round"/></svg>'}
+    </button>`;
   li.innerHTML = `
     <img class="track-thumb" src="${track.thumbnail || ""}" alt="">
     <div class="track-info">
@@ -118,8 +154,17 @@ function buildTrackItem(track, onClick) {
     </div>
     <div class="row-eq" style="display:none"><span></span><span></span><span></span></div>
     <div class="track-duration">${formatDuration(track.duration)}</div>
+    ${actionBtn}
   `;
   li.addEventListener("click", onClick);
+  if (mode !== "none") {
+    const btn = li.querySelector(".track-action");
+    btn.addEventListener("click", (e) => {
+      e.stopPropagation();
+      if (mode === "add") openAddModal(track);
+      else if (onAction) onAction();
+    });
+  }
   return li;
 }
 
@@ -145,6 +190,9 @@ function playTrack(index, queue) {
 
   audio.src = `${API_BASE}/api/stream/${track.id}`;
   audio.play().catch((e) => console.error("Gagal memutar:", e));
+
+  miniPlayer.classList.add("show");
+  appRoot.classList.add("has-track");
 
   updateMeta(track);
   setPlayingUI(true);
@@ -311,3 +359,175 @@ sheetHandle.addEventListener("touchmove", (e) => {
 }, { passive: true });
 sheetHandle.addEventListener("touchend", () => { dragStartY = null; });
 sheetHandle.addEventListener("click", () => playerSheet.classList.remove("open"));
+
+// ---------- Playlist ----------
+function genId() {
+  return `pl_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`;
+}
+
+function savePlaylists() {
+  localStorage.setItem("musikin_playlists", JSON.stringify(playlists));
+}
+
+function renderPlaylists() {
+  playlistGrid.innerHTML = "";
+  playlistEmptyState.style.display = playlists.length ? "none" : "flex";
+  playlists.forEach((pl) => {
+    const card = document.createElement("button");
+    card.className = "playlist-card";
+    card.innerHTML = `
+      <div class="playlist-card-icon">🎵</div>
+      <div class="playlist-card-info">
+        <div class="playlist-card-name">${escapeHtml(pl.name)}</div>
+        <div class="playlist-card-count">${pl.tracks.length} lagu</div>
+      </div>
+    `;
+    card.addEventListener("click", () => openPlaylistDetail(pl.id));
+    playlistGrid.appendChild(card);
+  });
+}
+
+function openPlaylistDetail(id) {
+  activePlaylistId = id;
+  renderPlaylistDetail();
+  playlistDetail.classList.add("open");
+}
+
+function renderPlaylistDetail() {
+  const pl = playlists.find((p) => p.id === activePlaylistId);
+  if (!pl) return;
+  playlistDetailName.textContent = pl.name;
+  playlistDetailCount.textContent = `${pl.tracks.length} lagu`;
+  playlistDetailList.innerHTML = "";
+  playlistDetailEmpty.style.display = pl.tracks.length ? "none" : "flex";
+  pl.tracks.forEach((track, idx) => {
+    const item = buildTrackItem(track, () => playTrack(idx, pl.tracks), {
+      mode: "remove",
+      onAction: () => removeFromPlaylist(pl.id, track.id),
+    });
+    playlistDetailList.appendChild(item);
+  });
+  highlightPlayingRow();
+}
+
+function removeFromPlaylist(playlistId, trackId) {
+  const pl = playlists.find((p) => p.id === playlistId);
+  if (!pl) return;
+  pl.tracks = pl.tracks.filter((t) => t.id !== trackId);
+  savePlaylists();
+  renderPlaylistDetail();
+  renderPlaylists();
+}
+
+playlistBackBtn.addEventListener("click", () => playlistDetail.classList.remove("open"));
+
+playlistRenameBtn.addEventListener("click", () => {
+  const pl = playlists.find((p) => p.id === activePlaylistId);
+  if (!pl) return;
+  openNameModal("rename", pl.name);
+});
+
+createPlaylistBtn.addEventListener("click", () => openNameModal("create", ""));
+
+function openNameModal(mode, value) {
+  nameModalMode = mode;
+  nameModalTitle.textContent = mode === "rename" ? "Ubah Nama Playlist" : "Playlist Baru";
+  nameModalInput.value = value;
+  nameModalOverlay.classList.add("open");
+  setTimeout(() => nameModalInput.focus(), 50);
+}
+
+function closeNameModal() {
+  nameModalOverlay.classList.remove("open");
+  nameModalMode = null;
+}
+
+nameModalCancel.addEventListener("click", closeNameModal);
+nameModalOverlay.addEventListener("click", (e) => {
+  if (e.target === nameModalOverlay) closeNameModal();
+});
+
+nameModalSave.addEventListener("click", () => {
+  const name = nameModalInput.value.trim();
+  if (!name) return;
+
+  if (nameModalMode === "create" || nameModalMode === "createAndAdd") {
+    const pl = {
+      id: genId(),
+      name,
+      tracks: nameModalMode === "createAndAdd" && addModalTrack ? [addModalTrack] : [],
+    };
+    playlists.unshift(pl);
+    savePlaylists();
+    renderPlaylists();
+    if (nameModalMode === "createAndAdd") renderAddModalList();
+  } else if (nameModalMode === "rename") {
+    const pl = playlists.find((p) => p.id === activePlaylistId);
+    if (pl) {
+      pl.name = name;
+      savePlaylists();
+      renderPlaylistDetail();
+      renderPlaylists();
+    }
+  }
+  closeNameModal();
+});
+
+nameModalInput.addEventListener("keydown", (e) => {
+  if (e.key === "Enter") nameModalSave.click();
+});
+
+// ---------- Modal: tambah lagu ke playlist ----------
+function openAddModal(track) {
+  addModalTrack = track;
+  renderAddModalList();
+  addModalOverlay.classList.add("open");
+}
+
+function closeAddModal() {
+  addModalOverlay.classList.remove("open");
+  addModalTrack = null;
+}
+
+function renderAddModalList() {
+  addModalList.innerHTML = "";
+  if (!playlists.length) {
+    addModalList.innerHTML = '<li class="modal-empty-hint">Belum ada playlist. Bikin dulu di bawah.</li>';
+    return;
+  }
+  playlists.forEach((pl) => {
+    const inPlaylist = addModalTrack && pl.tracks.some((t) => t.id === addModalTrack.id);
+    const li = document.createElement("li");
+    li.className = "playlist-pick-item" + (inPlaylist ? " picked" : "");
+    li.innerHTML = `
+      <span class="pick-check">${inPlaylist ? "✓" : ""}</span>
+      <span class="pick-name">${escapeHtml(pl.name)}</span>
+      <span class="pick-count">${pl.tracks.length} lagu</span>
+    `;
+    li.addEventListener("click", () => toggleTrackInPlaylist(pl.id));
+    addModalList.appendChild(li);
+  });
+}
+
+function toggleTrackInPlaylist(playlistId) {
+  const pl = playlists.find((p) => p.id === playlistId);
+  if (!pl || !addModalTrack) return;
+  const exists = pl.tracks.some((t) => t.id === addModalTrack.id);
+  if (exists) {
+    pl.tracks = pl.tracks.filter((t) => t.id !== addModalTrack.id);
+  } else {
+    pl.tracks.unshift(addModalTrack);
+  }
+  savePlaylists();
+  renderAddModalList();
+  renderPlaylists();
+  if (activePlaylistId === playlistId) renderPlaylistDetail();
+}
+
+addModalNewBtn.addEventListener("click", () => openNameModal("createAndAdd", ""));
+addModalDone.addEventListener("click", closeAddModal);
+addModalOverlay.addEventListener("click", (e) => {
+  if (e.target === addModalOverlay) closeAddModal();
+});
+
+renderPlaylists();
