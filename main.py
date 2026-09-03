@@ -265,7 +265,16 @@ YDL_SEARCH_OPTS = {
 # Beberapa kombinasi player_client dicoba berurutan sampai salah satu berhasil
 # ambil URL audio yang valid. "android"/"ios" biasanya lolos dari pembatasan
 # PO-token yang makin sering diterapkan YouTube ke client "web".
-PLAYER_CLIENT_ATTEMPTS = [["android"], ["ios"], ["web"], ["android", "ios", "web"]]
+# "web_embedded" ditambahkan sebagai fallback terakhir karena per pertengahan
+# 2026 client ini paling jarang butuh PO-token dibanding "web" biasa.
+#
+# PENTING: sejak yt-dlp 2025.11.12, YouTube MEWAJIBKAN "JS runtime" (Deno)
+# terpasang di server supaya semua client di atas (termasuk android/ios) bisa
+# konsisten dapat URL audio yang valid. Tanpa Deno, yt-dlp tetap jalan tapi
+# sering gagal diam-diam / dapat format yang cepat expired — persis gejala
+# "audio gagal diputar / tersendat". Lihat nixpacks.toml di root proyek ini
+# yang sudah memasang Deno otomatis saat build di Railway.
+PLAYER_CLIENT_ATTEMPTS = [["android"], ["ios"], ["web"], ["web_embedded"], ["android", "ios", "web"]]
 
 YDL_STREAM_OPTS_BASE = {
     "quiet": True,

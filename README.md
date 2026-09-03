@@ -95,6 +95,59 @@ Karena akun di sini cuma pakai username (tanpa email), reset password pakai
 ⚠️ Kalau user kehilangan kode pemulihan DAN lupa password sekaligus, akunnya
 tidak bisa dipulihkan lewat aplikasi — ini trade-off dari desain tanpa email.
 
+## Kalau audio sering "mati sendiri" / gagal diputar (baru)
+
+**Penyebab paling umum (sudah diperbaiki di versi ini):** sejak yt-dlp versi
+2025.11.12, YouTube mewajibkan server yang mengekstrak audio punya
+**"JS runtime" (Deno)** terpasang. Tanpa ini, yt-dlp tetap "jalan" tapi
+sering diam-diam gagal dapat URL audio yang valid — persis gejala
+"tersendat"/"gagal diputar". Perbaikannya:
+
+1. File `nixpacks.toml` di root proyek ini sudah memasang Deno otomatis
+   setiap kali Railway build ulang — **tidak perlu langkah manual apapun**,
+   cukup redeploy.
+2. `requirements.txt` sudah dinaikkan ke `yt-dlp[default]>=2026.08.19`
+   (versi lama `>=2024.12.1` sudah pasti gagal total di tahun 2026).
+3. **yt-dlp WAJIB di-update berkala** (bukan sekali pasang lalu dibiarkan) —
+   YouTube rutin mengubah mekanisme proteksinya tiap beberapa
+   minggu/bulan. Kalau tiba-tiba mulai gagal lagi setelah lama lancar,
+   coba naikkan dulu angka versi minimum `yt-dlp` di `requirements.txt` ke
+   rilis terbaru (cek di github.com/yt-dlp/yt-dlp/releases) sebelum curiga
+   hal lain.
+
+Selain itu, penyebab kedua yang masih mungkin terjadi: **YouTube
+membatasi/menolak IP server** kamu (umum di hosting cloud kayak Railway).
+Sudah dikuatin di versi ini:
+
+- `_get_audio_stream_info` sekarang nyoba beberapa "player client" YouTube
+  berurutan (`android` → `ios` → `web` → kombinasi ketiganya) sebelum
+  benar-benar menyerah, plus retry bawaan yt-dlp (`retries`,
+  `fragment_retries`, `extractor_retries`).
+- `/api/stream` nyoba konek ke sumber audio sampai 3x kalau gagal/ditolak
+  sesaat, dan kalau koneksinya putus di TENGAH streaming, server nutup
+  dengan rapi (gak crash) — dan frontend otomatis retry dari posisi
+  terakhir sampai 3x dengan jeda yang makin lama (600ms → 1.5s → 3s),
+  bukan cuma sekali kayak sebelumnya.
+- Ditambah "watchdog": kalau audio macet diem >10 detik tanpa progres
+  (bukan cuma yang munculin error eksplisit), otomatis dianggap gagal dan
+  masuk ke jalur retry yang sama.
+
+**Kalau masih sering gagal setelah ini**, itu tandanya IP server kamu
+memang lagi diblokir cukup keras sama YouTube, dan solusi paling ampuh
+adalah pasang `cookies.txt`:
+
+1. Login ke YouTube di browser kamu, lalu export cookies-nya (ekstensi
+   browser "Get cookies.txt LOCALLY" biasanya paling gampang).
+2. Upload file `cookies.txt` itu ke server (mis. lewat Railway Volume yang
+   sudah kamu pasang buat database, taruh di `/data/cookies.txt`).
+3. Set environment variable `COOKIES_FILE=/data/cookies.txt` di Railway.
+4. Redeploy. Server otomatis pakai cookies itu buat semua request ke
+   YouTube (search maupun stream) kalau env var-nya ke-set dan filenya ada.
+
+⚠️ Cookies YouTube ini biasanya berumur beberapa minggu–bulan sebelum perlu
+di-export ulang. Kalau tiba-tiba gagal lagi setelah lama jalan lancar,
+kemungkinan besar cookies-nya udah kedaluwarsa.
+
 ### Foto Profil
 
 User bisa ganti foto profil dari menu Profil (ikon kamera kecil di avatar).
