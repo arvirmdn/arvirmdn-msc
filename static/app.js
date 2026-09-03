@@ -682,6 +682,15 @@ function renderHistory() {
   highlightPlayingRow();
 }
 
+const clearHistoryBtn = document.getElementById("clearHistoryBtn");
+clearHistoryBtn.addEventListener("click", () => {
+  if (!history.length) return;
+  if (!confirm("Hapus semua riwayat lagu yang pernah diputar?")) return;
+  history = [];
+  localStorage.removeItem("musikin_history");
+  renderHistory();
+});
+
 // ---------- Play/pause ----------
 function togglePlay() {
   if (!audio.src) return;
