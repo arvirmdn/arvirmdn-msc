@@ -20,6 +20,16 @@ from pydantic import BaseModel, Field
 from PIL import Image, ImageOps
 import httpx
 import yt_dlp
+from slowapi import Limiter, _rate_limit_exceeded_handler
+from slowapi.errors import RateLimitExceeded
+from slowapi.middleware import SlowAPIMiddleware
+from slowapi.util import get_remote_address
+
+# ---------- Rate limiting ----------
+# Dibatasi per-IP. Endpoint yang rawan disalahgunakan (login/register/reset/
+# search/stream) dikasih limit lebih ketat lewat decorator @limiter.limit(...)
+# di masing-masing endpoint-nya di bawah.
+limiter = Limiter(key_func=get_remote_address)
 
 # ---------- Database (akun & playlist) ----------
 # Catatan penting: di Railway, file ini hilang tiap kali redeploy KECUALI kamu
@@ -73,6 +83,13 @@ def _init_db():
         user_cols = [r[1] for r in conn.execute("PRAGMA table_info(users)").fetchall()]
         if "avatar_version" not in user_cols:
             conn.execute("ALTER TABLE users ADD COLUMN avatar_version INTEGER DEFAULT 0")
+        # Kolom buat fitur reset password tanpa email: kode pemulihan (recovery
+        # code) yang ditampilkan sekali ke user saat daftar / regenerasi, lalu
+        # cuma disimpan hash-nya di sini (bukan plaintext).
+        if "recovery_code_hash" not in user_cols:
+            conn.execute("ALTER TABLE users ADD COLUMN recovery_code_hash TEXT")
+        if "recovery_code_salt" not in user_cols:
+            conn.execute("ALTER TABLE users ADD COLUMN recovery_code_salt TEXT")
         conn.commit()
 
 
@@ -98,6 +115,23 @@ def _hash_password(password: str, salt: Optional[str] = None):
 
 def _now():
     return datetime.now(timezone.utc).isoformat()
+
+
+def _generate_recovery_code() -> str:
+    """Kode pemulihan yang gampang dibaca/ditulis ulang manusia, mis. AB12-CD34-EF56."""
+    raw = secrets.token_hex(6).upper()  # 12 karakter hex
+    return "-".join(raw[i:i + 4] for i in range(0, 12, 4))
+
+
+def _set_recovery_code(conn, user_id: int) -> str:
+    """Generate kode baru, simpan hash-nya, kembalikan plaintext-nya (cuma sekali ini)."""
+    code = _generate_recovery_code()
+    code_hash, salt = _hash_password(code)
+    conn.execute(
+        "UPDATE users SET recovery_code_hash = ?, recovery_code_salt = ? WHERE id = ?",
+        (code_hash, salt, user_id),
+    )
+    return code
 
 
 USERNAME_RE = re.compile(r"^[a-zA-Z0-9_]{3,20}$")
@@ -127,6 +161,17 @@ class ChangePasswordRequest(BaseModel):
     current_password: str
     new_password: str
     confirm_new_password: str
+
+
+class ResetPasswordRequest(BaseModel):
+    username: str
+    recovery_code: str
+    new_password: str
+    confirm_new_password: str
+
+
+class RegenerateRecoveryRequest(BaseModel):
+    current_password: str
 
 
 def get_current_user(authorization: Optional[str] = Header(None)):
@@ -163,6 +208,10 @@ EXT_MIME = {
 }
 
 app = FastAPI(title="Web Musik - YouTube Auto Search")
+
+app.state.limiter = limiter
+app.add_exception_handler(RateLimitExceeded, _rate_limit_exceeded_handler)
+app.add_middleware(SlowAPIMiddleware)
 
 # Izinkan diakses dari domain manapun (silakan batasi ke domain frontend-mu di production)
 app.add_middleware(
@@ -273,7 +322,8 @@ def _get_audio_stream_info(video_id: str) -> dict:
 
 
 @app.get("/api/search")
-async def search(q: str = Query(..., min_length=1), limit: int = Query(20, ge=1, le=50)):
+@limiter.limit("30/minute")
+async def search(request: Request, q: str = Query(..., min_length=1), limit: int = Query(20, ge=1, le=50)):
     try:
         results = await _run_sync(_search_youtube, q, limit)
     except Exception as exc:
@@ -305,7 +355,8 @@ async def home():
 
 
 @app.get("/api/stream/{video_id}")
-async def stream(video_id: str, request: Request):
+@limiter.limit("20/minute")
+async def stream(request: Request, video_id: str):
     if not VIDEO_ID_RE.match(video_id):
         raise HTTPException(status_code=400, detail="video_id tidak valid")
     try:
@@ -383,7 +434,8 @@ async def info(video_id: str):
 
 # ---------- Auth ----------
 @app.post("/api/auth/register")
-async def register(payload: RegisterRequest):
+@limiter.limit("5/hour")
+async def register(request: Request, payload: RegisterRequest):
     username = payload.username.strip()
     if not USERNAME_RE.match(username):
         raise HTTPException(
@@ -412,12 +464,16 @@ async def register(payload: RegisterRequest):
             "INSERT INTO sessions (token, user_id, created_at) VALUES (?, ?, ?)",
             (token, user_id, _now()),
         )
+        recovery_code = _set_recovery_code(conn, user_id)
         conn.commit()
-    return {"token": token, "username": username}
+    # recovery_code cuma dikirim SEKALI di sini (plaintext) — server cuma nyimpen
+    # hash-nya. Kalau hilang, user harus login dulu buat generate ulang.
+    return {"token": token, "username": username, "recovery_code": recovery_code}
 
 
 @app.post("/api/auth/login")
-async def login(payload: LoginRequest):
+@limiter.limit("5/minute")
+async def login(request: Request, payload: LoginRequest):
     username = payload.username.strip()
     with get_db() as conn:
         row = conn.execute(
@@ -483,6 +539,56 @@ async def change_password(payload: ChangePasswordRequest, user=Depends(get_curre
         conn.execute("DELETE FROM sessions WHERE user_id = ?", (user["id"],))
         conn.commit()
     return {"ok": True}
+
+
+@app.post("/api/auth/reset-password")
+@limiter.limit("5/minute")
+async def reset_password(request: Request, payload: ResetPasswordRequest):
+    username = payload.username.strip()
+    code = payload.recovery_code.strip().upper()
+    if len(payload.new_password) < 6:
+        raise HTTPException(status_code=400, detail="Kata sandi baru minimal 6 karakter")
+    if payload.new_password != payload.confirm_new_password:
+        raise HTTPException(status_code=400, detail="Konfirmasi kata sandi baru tidak cocok")
+
+    with get_db() as conn:
+        row = conn.execute(
+            "SELECT id, recovery_code_hash, recovery_code_salt FROM users WHERE username = ?",
+            (username,),
+        ).fetchone()
+        # Balasan generik biar gak bocorin username mana yang valid.
+        invalid_msg = "Nama pengguna atau kode pemulihan salah"
+        if not row or not row["recovery_code_hash"]:
+            raise HTTPException(status_code=401, detail=invalid_msg)
+        check_hash, _ = _hash_password(code, row["recovery_code_salt"])
+        if not secrets.compare_digest(check_hash, row["recovery_code_hash"]):
+            raise HTTPException(status_code=401, detail=invalid_msg)
+
+        new_hash, new_salt = _hash_password(payload.new_password)
+        conn.execute(
+            "UPDATE users SET password_hash = ?, salt = ? WHERE id = ?",
+            (new_hash, new_salt, row["id"]),
+        )
+        # Putus semua sesi lama demi keamanan, dan kode dirotasi (sekali pakai)
+        # supaya kode yang sama gak bisa dipakai berulang kalau pernah bocor.
+        conn.execute("DELETE FROM sessions WHERE user_id = ?", (row["id"],))
+        new_code = _set_recovery_code(conn, row["id"])
+        conn.commit()
+    return {"ok": True, "recovery_code": new_code}
+
+
+@app.post("/api/auth/recovery-code/regenerate")
+async def regenerate_recovery_code(payload: RegenerateRecoveryRequest, user=Depends(get_current_user)):
+    with get_db() as conn:
+        row = conn.execute(
+            "SELECT password_hash, salt FROM users WHERE id = ?", (user["id"],)
+        ).fetchone()
+        check_hash, _ = _hash_password(payload.current_password, row["salt"])
+        if not secrets.compare_digest(check_hash, row["password_hash"]):
+            raise HTTPException(status_code=401, detail="Kata sandi salah")
+        new_code = _set_recovery_code(conn, user["id"])
+        conn.commit()
+    return {"recovery_code": new_code}
 
 
 def _avatar_path(user_id: int) -> str:

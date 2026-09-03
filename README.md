@@ -57,6 +57,44 @@ Railway **mereset filesystem setiap kali kamu redeploy** kecuali kamu pasang
 Tanpa langkah ini, versi dasar tetap jalan normal untuk development/testing,
 tapi semua akun & playlist akan hilang setiap kali ada deploy baru.
 
+## Rate limiting (baru)
+
+Endpoint yang rawan disalahgunakan sekarang dibatasi per-IP pakai `slowapi`:
+
+- `POST /api/auth/login` — 5/menit
+- `POST /api/auth/register` — 5/jam
+- `POST /api/auth/reset-password` — 5/menit
+- `GET /api/search` — 30/menit
+- `GET /api/stream/{video_id}` — 20/menit
+
+Kalau limit kelewat, server balas `429 Too Many Requests` dan frontend
+menampilkan pesan "terlalu banyak percobaan". Angka-angka ini didefinisikan
+lewat decorator `@limiter.limit(...)` di `main.py`, tinggal ubah sesuai
+kebutuhan.
+
+## Lupa kata sandi / Reset password (baru)
+
+Karena akun di sini cuma pakai username (tanpa email), reset password pakai
+**kode pemulihan** (recovery code), bukan link lewat email:
+
+- Saat **daftar**, user langsung dikasih kode pemulihan (format
+  `AB12-CD34-EF56`) lewat modal — cuma ditampilkan **sekali**, dan yang
+  disimpan di database cuma hash-nya (pakai algoritma hash yang sama dengan
+  password, PBKDF2-SHA256 + salt).
+- Kalau lupa password, user klik "Lupa kata sandi?" di layar login, lalu
+  masukkan username + kode pemulihan + password baru lewat
+  `POST /api/auth/reset-password`. Berhasil reset akan otomatis logout semua
+  sesi lama, dan kode pemulihan dirotasi (kode lama jadi tidak berlaku,
+  langsung dikasih kode baru).
+- Dari menu Profil, ada tombol "Buat / Perbarui Kode Pemulihan"
+  (`POST /api/auth/recovery-code/regenerate`, butuh konfirmasi password saat
+  ini) — buat generate kode baru kalau kodenya hilang, atau buat akun lama
+  yang dibuat sebelum fitur ini ada (kolom recovery code-nya otomatis
+  ditambahkan lewat migrasi ringan di `_init_db()`).
+
+⚠️ Kalau user kehilangan kode pemulihan DAN lupa password sekaligus, akunnya
+tidak bisa dipulihkan lewat aplikasi — ini trade-off dari desain tanpa email.
+
 ### Foto Profil
 
 User bisa ganti foto profil dari menu Profil (ikon kamera kecil di avatar).
