@@ -619,6 +619,8 @@ function playTrack(index, queue) {
   const track = currentQueue[index];
   if (!track) return;
 
+  errorRetryCount = 0;
+  clearStallWatchdog();
   audio.src = `${API_BASE}/api/stream/${track.id}`;
   audio.play().catch((e) => console.error("Gagal memutar:", e));
 
@@ -724,46 +726,82 @@ audio.addEventListener("ended", () => {
   }
 });
 
+let stallWatchdog = null;
+
+function clearStallWatchdog() {
+  if (stallWatchdog) {
+    clearTimeout(stallWatchdog);
+    stallWatchdog = null;
+  }
+}
+
+function armStallWatchdog() {
+  clearStallWatchdog();
+  // Kalau dalam 10 detik gak ada progres sama sekali (bukan cuma "error"
+  // eksplisit, tapi juga macet diem tanpa event error), anggap gagal dan
+  // masuk jalur retry yang sama kayak audio.error.
+  stallWatchdog = setTimeout(() => {
+    if (audio.paused || !audio.src) return;
+    handlePlaybackFailure();
+  }, 10000);
+}
+
 audio.addEventListener("stalled", () => {
   statusRow.textContent = "Koneksi audio tersendat, coba tunggu sebentar...";
+  armStallWatchdog();
 });
 
 audio.addEventListener("waiting", () => {
   statusRow.textContent = "Memuat audio...";
+  armStallWatchdog();
 });
 
 audio.addEventListener("playing", () => {
-  if (statusRow.textContent.startsWith("Memuat") || statusRow.textContent.startsWith("Koneksi")) {
+  clearStallWatchdog();
+  errorRetryCount = 0;
+  if (statusRow.textContent.startsWith("Memuat") || statusRow.textContent.startsWith("Koneksi") || statusRow.textContent.startsWith("Gagal")) {
     statusRow.textContent = "";
   }
 });
 
+audio.addEventListener("timeupdate", () => clearStallWatchdog());
+
+const MAX_PLAY_RETRIES = 3;
 let errorRetryCount = 0;
-audio.addEventListener("error", () => {
-  console.error("Audio error:", audio.error);
-  setPlayingUI(false);
+
+function handlePlaybackFailure() {
+  clearStallWatchdog();
   const track = currentQueue[currentIndex];
   const label = track ? `"${track.title}"` : "lagu ini";
 
-  if (errorRetryCount < 1) {
-    // Kadang gagal sekali karena URL upstream keburu basi — coba re-fetch sekali.
+  if (errorRetryCount < MAX_PLAY_RETRIES && track) {
     errorRetryCount++;
-    statusRow.textContent = `Gagal muter ${label}, mencoba ulang...`;
-    const retryTrack = currentQueue[currentIndex];
+    const resumeAt = isNaN(audio.currentTime) ? 0 : audio.currentTime;
+    const delay = [600, 1500, 3000][errorRetryCount - 1] || 3000;
+    statusRow.textContent = `Gagal muter ${label}, mencoba ulang (${errorRetryCount}/${MAX_PLAY_RETRIES})...`;
     setTimeout(() => {
-      if (retryTrack) {
-        audio.src = `${API_BASE}/api/stream/${retryTrack.id}?retry=${Date.now()}`;
+      if (currentQueue[currentIndex] !== track) return; // user udah pindah lagu, jangan retry yang lama
+      audio.src = `${API_BASE}/api/stream/${track.id}?retry=${Date.now()}`;
+      audio.load();
+      const resumePlayback = () => {
+        if (resumeAt > 0) audio.currentTime = resumeAt;
         audio.play().catch(() => {});
-      }
-    }, 600);
+        audio.removeEventListener("loadedmetadata", resumePlayback);
+      };
+      audio.addEventListener("loadedmetadata", resumePlayback);
+    }, delay);
     return;
   }
 
   errorRetryCount = 0;
-  statusRow.textContent = `Gagal muter ${label}. Kemungkinan sumbernya diblokir/dibatasi — coba lagu lain atau cek log server.`;
-});
+  setPlayingUI(false);
+  statusRow.textContent = `Gagal muter ${label}. Kemungkinan sumbernya diblokir/dibatasi — coba lagu lain.`;
+}
 
-audio.addEventListener("play", () => { errorRetryCount = 0; });
+audio.addEventListener("error", () => {
+  console.error("Audio error:", audio.error);
+  handlePlaybackFailure();
+});
 
 audio.addEventListener("timeupdate", () => {
   if (!isNaN(audio.duration)) {
@@ -1247,4 +1285,11 @@ window.addEventListener("popstate", () => {
   // navigasi keluar dari halaman ini.
   pushBackTrapState();
   closeTopmostOverlayForBack();
+});
+
+// Jaga-jaga: kalau halaman dipulihkan dari "back-forward cache" browser
+// (mis. sempat pindah tab lalu balik lagi), pastikan dummy state-nya masih
+// terpasang biar trap-nya tetap aktif.
+window.addEventListener("pageshow", (e) => {
+  if (e.persisted) pushBackTrapState();
 });
