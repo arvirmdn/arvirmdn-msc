@@ -1,13 +1,11 @@
 # File ini dibaca otomatis oleh Railway (pakai Nixpacks sebagai builder).
 #
-# "deno" WAJIB ada di sini karena yt-dlp (dipakai di main.py untuk ambil audio
-# dari YouTube) sejak versi 2025.11.12 butuh "JS runtime" eksternal untuk bisa
-# konsisten mengekstrak URL audio yang valid. Tanpa ini, gejalanya persis
-# seperti yang sering dikeluhkan: audio gagal diputar / tersendat / URL cepat
-# mati, meskipun kode Python & JS-nya sendiri tidak ada bug.
+# "ffmpeg" WAJIB ada di sini karena kita download audio dari YouTube
+# lalu convert ke MP3 pakai FFmpegExtractAudio (postprocessor yt-dlp).
+# Tanpa ffmpeg, audio tidak bisa di-convert ke format MP3.
 #
-# "..." wajib ada supaya paket Python bawaan (yang otomatis dideteksi
-# Nixpacks dari requirements.txt) tetap terpasang -- baris ini cuma
-# MENAMBAHKAN "deno", bukan menggantikan seluruh daftar paket.
+# "deno" juga tetap diperlukan untuk yt-dlp.
+#
+# "..." wajib ada supaya paket Python bawaan tetap terpasang.
 [phases.setup]
-nixPkgs = ["...", "deno"]
+nixPkgs = ["...", "deno", "ffmpeg"]

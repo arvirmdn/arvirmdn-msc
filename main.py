@@ -15,10 +15,14 @@ from typing import List, Optional
 from fastapi import Depends, FastAPI, File, Header, HTTPException, Query, Request, UploadFile
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse, StreamingResponse
+from fastapi.background import BackgroundTask
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field
 from PIL import Image, ImageOps
+import glob
 import httpx
+import shutil
+import tempfile
 import yt_dlp
 from slowapi import Limiter, _rate_limit_exceeded_handler
 from slowapi.errors import RateLimitExceeded
@@ -396,76 +400,59 @@ async def home():
     return payload
 
 
+
+
+def download_audio_file(video_id: str) -> tuple:
+    """Download audio from YouTube, convert to MP3, return filepath and temp_dir."""
+    tmp_dir = tempfile.mkdtemp(prefix="dl_")
+    ydl_opts = {
+        "quiet": True,
+        "no_warnings": True,
+        "format": "bestaudio/best",
+        "noplaylist": True,
+        "socket_timeout": 30,
+        "outtmpl": os.path.join(tmp_dir, "%(id)s.%(ext)s"),
+        "extractor_args": {"youtube": {"player_client": ["android", "web"]}},
+        "postprocessors": [{
+            "key": "FFmpegExtractAudio",
+            "preferredcodec": "mp3",
+            "preferredquality": "192",
+        }],
+    }
+    try:
+        with yt_dlp.YoutubeDL(ydl_opts) as ydl:
+            url = f"https://www.youtube.com/watch?v={video_id}"
+            ydl.download([url])
+    except Exception:
+        shutil.rmtree(tmp_dir, ignore_errors=True)
+        raise
+    files = [f for f in glob.glob(os.path.join(tmp_dir, "*")) if os.path.isfile(f)]
+    mp3s = [f for f in files if f.lower().endswith(".mp3")]
+    chosen = mp3s or files
+    if not chosen:
+        shutil.rmtree(tmp_dir, ignore_errors=True)
+        raise RuntimeError("File audio hasil download tidak ditemukan di server.")
+    return chosen[0], tmp_dir
+
+
 @app.get("/api/stream/{video_id}")
 @limiter.limit("20/minute")
 async def stream(request: Request, video_id: str):
+    """Download audio dari YouTube ke server, lalu serve sebagai file MP3.
+    Cara ini mirip WEB ALLMENU — tidak streaming langsung, tapi download dulu.
+    """
     if not VIDEO_ID_RE.match(video_id):
         raise HTTPException(status_code=400, detail="video_id tidak valid")
     try:
-        stream_info = await _run_sync(_get_audio_stream_info, video_id)
+        filepath, tmp_dir = await _run_sync(download_audio_file, video_id)
     except Exception as exc:
-        raise HTTPException(status_code=502, detail=f"Gagal mengambil audio: {exc}")
-
-    audio_url = stream_info["url"]
-    mime = EXT_MIME.get(stream_info["ext"], "audio/mp4")
-
-    upstream_headers = dict(BROWSER_HEADERS)
-    # Teruskan Range request dari <audio> browser (dibutuhkan untuk seek & buffering stabil)
-    range_header = request.headers.get("range")
-    if range_header:
-        upstream_headers["Range"] = range_header
-
-    client = httpx.AsyncClient(
-        timeout=httpx.Timeout(connect=10.0, read=60.0, write=10.0, pool=10.0),
-        follow_redirects=True,
+        raise HTTPException(status_code=502, detail=f"Gagal mengunduh audio: {exc}")
+    return FileResponse(
+        filepath,
+        media_type="audio/mpeg",
+        filename=f"{video_id}.mp3",
+        background=BackgroundTask(lambda: shutil.rmtree(tmp_dir, ignore_errors=True)),
     )
-    upstream_resp = None
-    last_error = None
-    # Coba konek ke sumber audio sampai 3x — kadang googlevideo.com nolak
-    # sesaat/transient, bukan berarti URL-nya beneran mati.
-    for attempt in range(3):
-        try:
-            req = client.build_request("GET", audio_url, headers=upstream_headers)
-            upstream_resp = await client.send(req, stream=True)
-            if upstream_resp.status_code >= 400:
-                await upstream_resp.aclose()
-                last_error = f"status {upstream_resp.status_code}"
-                upstream_resp = None
-                await asyncio.sleep(0.5)
-                continue
-            break
-        except Exception as exc:
-            last_error = str(exc)
-            await asyncio.sleep(0.5)
-            continue
-
-    if upstream_resp is None:
-        await client.aclose()
-        raise HTTPException(
-            status_code=502,
-            detail=f"Sumber audio menolak/gagal konek setelah beberapa percobaan ({last_error})",
-        )
-
-    resp_headers = {"accept-ranges": "bytes"}
-    for h in ("content-range", "content-length"):
-        if h in upstream_resp.headers:
-            resp_headers[h] = upstream_resp.headers[h]
-
-    async def proxy():
-        try:
-            async for chunk in upstream_resp.aiter_bytes(chunk_size=65536):
-                yield chunk
-        except Exception:
-            # Koneksi ke googlevideo.com putus di tengah jalan (umum kalau
-            # lagi dibatasi YouTube). Biarkan stream berhenti dengan rapi;
-            # frontend yang nanganin retry/pesan errornya ke user.
-            return
-        finally:
-            await upstream_resp.aclose()
-            await client.aclose()
-
-    status_code = 206 if range_header and upstream_resp.status_code == 206 else 200
-    return StreamingResponse(proxy(), status_code=status_code, media_type=mime, headers=resp_headers)
 
 
 @app.get("/api/info/{video_id}")
