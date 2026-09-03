@@ -2,13 +2,13 @@
 // Endpoint /api/* (search, stream, home, info) SENGAJA tidak di-cache karena
 // selalu butuh data terbaru / stream audio langsung dari server.
 
-const CACHE_NAME = "musikin-shell-v4";
+const CACHE_NAME = "musikin-shell-v5";
 
 const SHELL_FILES = [
   "./",
   "./index.html",
-  "./style.css?v=9",
-  "./app.js?v=8",
+  "./style.css?v=10",
+  "./app.js?v=10",
   "./favicon.svg",
   "./manifest.json",
   "./icon-192.png",
