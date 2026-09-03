@@ -12,10 +12,9 @@ from contextlib import contextmanager
 from datetime import datetime, timezone
 from typing import List, Optional
 
-from fastapi import Depends, FastAPI, File, Header, HTTPException, Query, Request, UploadFile
+from fastapi import BackgroundTasks, Depends, FastAPI, File, Header, HTTPException, Query, Request, UploadFile
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse, StreamingResponse
-from fastapi.background import BackgroundTask
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field
 from PIL import Image, ImageOps
@@ -437,7 +436,7 @@ def download_audio_file(video_id: str) -> tuple:
 
 @app.get("/api/stream/{video_id}")
 @limiter.limit("20/minute")
-async def stream(request: Request, video_id: str):
+async def stream(request: Request, video_id: str, background_tasks: BackgroundTasks):
     """Download audio dari YouTube ke server, lalu serve sebagai file MP3.
     Cara ini mirip WEB ALLMENU — tidak streaming langsung, tapi download dulu.
     """
@@ -447,11 +446,16 @@ async def stream(request: Request, video_id: str):
         filepath, tmp_dir = await _run_sync(download_audio_file, video_id)
     except Exception as exc:
         raise HTTPException(status_code=502, detail=f"Gagal mengunduh audio: {exc}")
+
+    def cleanup():
+        shutil.rmtree(tmp_dir, ignore_errors=True)
+
+    background_tasks.add_task(cleanup)
+
     return FileResponse(
         filepath,
         media_type="audio/mpeg",
         filename=f"{video_id}.mp3",
-        background=BackgroundTask(lambda: shutil.rmtree(tmp_dir, ignore_errors=True)),
     )
 
 
