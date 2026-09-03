@@ -781,7 +781,7 @@ function handlePlaybackFailure() {
     statusRow.textContent = `Gagal muter ${label}, mencoba ulang (${errorRetryCount}/${MAX_PLAY_RETRIES})...`;
     setTimeout(() => {
       if (currentQueue[currentIndex] !== track) return; // user udah pindah lagu, jangan retry yang lama
-      audio.src = `${API_BASE}/api/stream/${track.id}?retry=${Date.now()}`;
+      audio.src = `${API_BASE}/api/stream/${track.id}`;
       audio.load();
       const resumePlayback = () => {
         if (resumeAt > 0) audio.currentTime = resumeAt;
