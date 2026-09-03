@@ -20,8 +20,7 @@ const THEME_KEY = "musikin-theme";
 
 function currentEffectiveTheme() {
   const manual = document.documentElement.getAttribute("data-theme");
-  if (manual === "light" || manual === "dark") return manual;
-  return window.matchMedia("(prefers-color-scheme: light)").matches ? "light" : "dark";
+  return manual === "light" ? "light" : "dark";
 }
 
 function applyThemeColorMeta(theme) {
