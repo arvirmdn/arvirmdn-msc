@@ -14,6 +14,167 @@ const homeRetryBtn = document.getElementById("homeRetryBtn");
 
 const audio = document.getElementById("audioPlayer");
 
+// Reset password (kode pemulihan)
+const forgotPasswordLink = document.getElementById("forgotPasswordLink");
+const resetModalOverlay = document.getElementById("resetModalOverlay");
+const resetUsernameInput = document.getElementById("resetUsername");
+const resetCodeInput = document.getElementById("resetCode");
+const resetNewPasswordInput = document.getElementById("resetNewPassword");
+const resetConfirmPasswordInput = document.getElementById("resetConfirmPassword");
+const resetErrorEl = document.getElementById("resetError");
+const resetModalCancel = document.getElementById("resetModalCancel");
+const resetModalSubmit = document.getElementById("resetModalSubmit");
+
+const recoveryModalOverlay = document.getElementById("recoveryModalOverlay");
+const recoveryCodeBox = document.getElementById("recoveryCodeBox");
+const recoveryModalCopy = document.getElementById("recoveryModalCopy");
+const recoveryModalClose = document.getElementById("recoveryModalClose");
+
+const regenRecoveryBtn = document.getElementById("regenRecoveryBtn");
+const regenModalOverlay = document.getElementById("regenModalOverlay");
+const regenPasswordInput = document.getElementById("regenPassword");
+const regenErrorEl = document.getElementById("regenError");
+const regenModalCancel = document.getElementById("regenModalCancel");
+const regenModalSubmit = document.getElementById("regenModalSubmit");
+
+// Dipanggil setelah user klik "Sudah Aku Simpan" di modal kode pemulihan,
+// kalau lagi di tengah alur daftar (register) — biar app baru dibuka setelah
+// user sadar nyimpen kodenya.
+let pendingEnterAppAfterRecovery = false;
+
+function openRecoveryModal(code) {
+  recoveryCodeBox.textContent = code;
+  recoveryModalOverlay.classList.add("open");
+}
+function closeRecoveryModal() {
+  recoveryModalOverlay.classList.remove("open");
+  if (pendingEnterAppAfterRecovery) {
+    pendingEnterAppAfterRecovery = false;
+    enterApp();
+  }
+}
+recoveryModalClose.addEventListener("click", closeRecoveryModal);
+recoveryModalCopy.addEventListener("click", async () => {
+  try {
+    await navigator.clipboard.writeText(recoveryCodeBox.textContent.trim());
+    recoveryModalCopy.textContent = "Tersalin!";
+    setTimeout(() => { recoveryModalCopy.textContent = "Salin"; }, 1500);
+  } catch (e) {
+    // clipboard API mungkin gak tersedia (mis. http non-secure) — abaikan
+  }
+});
+
+function openResetModal() {
+  resetErrorEl.style.display = "none";
+  resetUsernameInput.value = authUsernameInput.value.trim();
+  resetCodeInput.value = "";
+  resetNewPasswordInput.value = "";
+  resetConfirmPasswordInput.value = "";
+  resetModalOverlay.classList.add("open");
+}
+function closeResetModal() {
+  resetModalOverlay.classList.remove("open");
+}
+forgotPasswordLink.addEventListener("click", openResetModal);
+resetModalCancel.addEventListener("click", closeResetModal);
+resetModalOverlay.addEventListener("click", (e) => {
+  if (e.target === resetModalOverlay) closeResetModal();
+});
+
+function showResetError(msg) {
+  resetErrorEl.textContent = msg;
+  resetErrorEl.style.display = "block";
+}
+
+resetModalSubmit.addEventListener("click", async () => {
+  const username = resetUsernameInput.value.trim();
+  const code = resetCodeInput.value.trim();
+  const newPassword = resetNewPasswordInput.value;
+  const confirmNewPassword = resetConfirmPasswordInput.value;
+  if (!username || !code || !newPassword) {
+    showResetError("Semua kolom wajib diisi.");
+    return;
+  }
+  resetModalSubmit.disabled = true;
+  resetErrorEl.style.display = "none";
+  try {
+    const res = await fetch(`${API_BASE}/api/auth/reset-password`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        username,
+        recovery_code: code,
+        new_password: newPassword,
+        confirm_new_password: confirmNewPassword,
+      }),
+    });
+    if (res.status === 429) {
+      showResetError("Terlalu banyak percobaan. Coba lagi beberapa saat lagi.");
+      return;
+    }
+    const data = await res.json();
+    if (!res.ok) {
+      showResetError(data.detail || "Gagal reset kata sandi.");
+      return;
+    }
+    closeResetModal();
+    setAuthMode("login");
+    authUsernameInput.value = username;
+    showAuthError("Kata sandi berhasil diganti. Kode pemulihan barumu ditampilkan di bawah — simpan lagi.");
+    openRecoveryModal(data.recovery_code);
+  } catch (err) {
+    console.error(err);
+    showResetError("Tidak bisa menghubungi server. Coba lagi.");
+  } finally {
+    resetModalSubmit.disabled = false;
+  }
+});
+
+function openRegenModal() {
+  regenErrorEl.style.display = "none";
+  regenPasswordInput.value = "";
+  regenModalOverlay.classList.add("open");
+}
+function closeRegenModal() {
+  regenModalOverlay.classList.remove("open");
+}
+regenRecoveryBtn.addEventListener("click", openRegenModal);
+regenModalCancel.addEventListener("click", closeRegenModal);
+regenModalOverlay.addEventListener("click", (e) => {
+  if (e.target === regenModalOverlay) closeRegenModal();
+});
+
+regenModalSubmit.addEventListener("click", async () => {
+  const currentPassword = regenPasswordInput.value;
+  if (!currentPassword) {
+    regenErrorEl.textContent = "Masukkan kata sandi kamu dulu.";
+    regenErrorEl.style.display = "block";
+    return;
+  }
+  regenModalSubmit.disabled = true;
+  try {
+    const res = await fetch(`${API_BASE}/api/auth/recovery-code/regenerate`, {
+      method: "POST",
+      headers: authHeaders({ "Content-Type": "application/json" }),
+      body: JSON.stringify({ current_password: currentPassword }),
+    });
+    const data = await res.json();
+    if (!res.ok) {
+      regenErrorEl.textContent = data.detail || "Gagal generate kode.";
+      regenErrorEl.style.display = "block";
+      return;
+    }
+    closeRegenModal();
+    openRecoveryModal(data.recovery_code);
+  } catch (err) {
+    console.error(err);
+    regenErrorEl.textContent = "Tidak bisa menghubungi server.";
+    regenErrorEl.style.display = "block";
+  } finally {
+    regenModalSubmit.disabled = false;
+  }
+});
+
 // ---------- Tema gelap/terang ----------
 const themeToggleBtn = document.getElementById("themeToggleBtn");
 const THEME_KEY = "musikin-theme";
@@ -252,17 +413,28 @@ async function submitAuth() {
         }),
       });
     }
+    if (res.status === 429) {
+      showAuthError("Terlalu banyak percobaan. Coba lagi beberapa saat lagi.");
+      return;
+    }
     const data = await res.json();
     if (!res.ok) {
       showAuthError(data.detail || "Terjadi kesalahan, coba lagi.");
       return;
     }
+    const wasRegister = authMode === "register";
     setAuth(data.token, data.username);
     authUsernameInput.value = "";
     authPasswordInput.value = "";
     authConfirmPasswordInput.value = "";
     await fetchAndSetCurrentUser();
-    await enterApp();
+    if (wasRegister && data.recovery_code) {
+      // Tunda masuk ke app sampai user konfirmasi udah nyimpen kode pemulihannya.
+      pendingEnterAppAfterRecovery = true;
+      openRecoveryModal(data.recovery_code);
+    } else {
+      await enterApp();
+    }
   } catch (err) {
     console.error(err);
     showAuthError("Tidak bisa menghubungi server. Coba lagi.");
@@ -363,6 +535,11 @@ async function doSearch(query) {
   resultList.innerHTML = "";
   try {
     const res = await fetch(`${API_BASE}/api/search?q=${encodeURIComponent(query)}`);
+    if (res.status === 429) {
+      statusRow.textContent = "Terlalu banyak pencarian, tunggu sebentar lalu coba lagi.";
+      emptyState.style.display = "flex";
+      return;
+    }
     if (!res.ok) throw new Error("Gagal mencari");
     const data = await res.json();
     currentQueue = data.results;

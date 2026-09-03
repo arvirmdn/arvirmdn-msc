@@ -726,6 +726,64 @@ input { font-family: inherit; }
 .modal-btn.primary { background: var(--accent); color: #06130d; }
 .modal-btn:active { opacity: 0.75; }
 
+.modal-hint {
+  font-size: 13px;
+  color: var(--text-dim);
+  line-height: 1.5;
+  margin-bottom: 14px;
+}
+
+.recovery-code-box {
+  font-family: "Space Grotesk", monospace;
+  font-size: 20px;
+  font-weight: 700;
+  letter-spacing: 1px;
+  text-align: center;
+  background: var(--surface-2);
+  border: 1px dashed var(--accent);
+  border-radius: 12px;
+  padding: 16px 10px;
+  color: var(--accent);
+  word-break: break-all;
+}
+
+.auth-forgot-link {
+  display: block;
+  margin: -6px 0 16px;
+  font-size: 13px;
+  color: var(--text-dim);
+  text-decoration: underline;
+  text-align: right;
+  width: 100%;
+}
+
+.profile-section {
+  margin-top: 22px;
+  padding-top: 18px;
+  border-top: 1px solid var(--border);
+}
+
+.profile-section-title {
+  font-family: "Space Grotesk", sans-serif;
+  font-size: 14.5px;
+  font-weight: 600;
+  margin-bottom: 6px;
+}
+
+.profile-secondary-btn {
+  width: 100%;
+  margin-top: 10px;
+  padding: 12px;
+  border-radius: 12px;
+  background: var(--surface-2);
+  border: 1px solid var(--border);
+  color: var(--text);
+  font-size: 14px;
+  font-weight: 600;
+  text-align: center;
+}
+.profile-secondary-btn:active { opacity: 0.75; }
+
 .playlist-pick-list {
   list-style: none;
   max-height: 40vh;

@@ -80,10 +80,56 @@
         </div>
       </div>
 
+      <button class="auth-forgot-link" id="forgotPasswordLink" type="button">Lupa kata sandi?</button>
+
       <button class="auth-submit" id="authSubmitBtn" type="button">
         <svg width="17" height="17" viewBox="0 0 24 24" fill="none"><path d="M10 17l5-5-5-5M15 12H3M13 3h6a2 2 0 0 1 2 2v14a2 2 0 0 1-2 2h-6" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></svg>
         <span id="authSubmitLabel">Masuk</span>
       </button>
+    </div>
+  </div>
+
+  <!-- ===== MODAL: RESET KATA SANDI (pakai kode pemulihan) ===== -->
+  <div class="modal-overlay" id="resetModalOverlay">
+    <div class="modal-sheet">
+      <h3 class="modal-title">Reset Kata Sandi</h3>
+      <p class="modal-hint">Masukkan kode pemulihan yang kamu simpan waktu daftar.</p>
+      <p class="auth-error" id="resetError" style="display:none"></p>
+      <input id="resetUsername" class="modal-input" type="text" placeholder="Nama pengguna" autocomplete="username">
+      <input id="resetCode" class="modal-input" type="text" placeholder="Kode pemulihan (mis. AB12-CD34-EF56)" autocomplete="off" style="margin-top:8px">
+      <input id="resetNewPassword" class="modal-input" type="password" placeholder="Kata sandi baru" autocomplete="new-password" style="margin-top:8px">
+      <input id="resetConfirmPassword" class="modal-input" type="password" placeholder="Ulangi kata sandi baru" autocomplete="new-password" style="margin-top:8px">
+      <div class="modal-actions">
+        <button id="resetModalCancel" class="modal-btn ghost">Batal</button>
+        <button id="resetModalSubmit" class="modal-btn primary">Reset</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- ===== MODAL: KONFIRMASI PASSWORD BUAT KODE PEMULIHAN BARU ===== -->
+  <div class="modal-overlay" id="regenModalOverlay">
+    <div class="modal-sheet">
+      <h3 class="modal-title">Konfirmasi Kata Sandi</h3>
+      <p class="modal-hint">Masukkan kata sandi kamu saat ini buat generate kode pemulihan baru. Kode lama otomatis tidak berlaku lagi.</p>
+      <p class="auth-error" id="regenError" style="display:none"></p>
+      <input id="regenPassword" class="modal-input" type="password" placeholder="Kata sandi saat ini" autocomplete="current-password">
+      <div class="modal-actions">
+        <button id="regenModalCancel" class="modal-btn ghost">Batal</button>
+        <button id="regenModalSubmit" class="modal-btn primary">Generate</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- ===== MODAL: TAMPILKAN KODE PEMULIHAN ===== -->
+  <div class="modal-overlay" id="recoveryModalOverlay">
+    <div class="modal-sheet">
+      <h3 class="modal-title">Simpan Kode Pemulihan Kamu</h3>
+      <p class="modal-hint">Kode ini cuma ditampilkan sekali. Simpan baik-baik — ini satu-satunya cara reset kata sandi kalau kamu lupa, karena akun ini tidak pakai email.</p>
+      <div class="recovery-code-box" id="recoveryCodeBox">----</div>
+      <div class="modal-actions">
+        <button id="recoveryModalCopy" class="modal-btn ghost">Salin</button>
+        <button id="recoveryModalClose" class="modal-btn primary">Sudah Aku Simpan</button>
+      </div>
     </div>
   </div>
 
@@ -226,6 +272,12 @@
             </div>
           </div>
           <button class="auth-submit" id="cpSubmitBtn" type="button">Simpan Kata Sandi</button>
+        </div>
+
+        <div class="profile-section">
+          <h3 class="profile-section-title">Kode Pemulihan</h3>
+          <p class="modal-hint">Dipakai buat reset kata sandi kalau lupa (akun ini tidak pakai email). Generate ulang kalau kode lamamu hilang.</p>
+          <button class="profile-secondary-btn" id="regenRecoveryBtn" type="button">Buat / Perbarui Kode Pemulihan</button>
         </div>
 
         <button class="profile-logout-btn" id="logoutBtn">
