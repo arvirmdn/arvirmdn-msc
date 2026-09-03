@@ -31,6 +31,62 @@
   }
 }
 
+/* ---------- Pilihan manual lewat tombol (override deteksi otomatis) ---------- */
+:root[data-theme="light"] {
+  --bg: #f5f6f8;
+  --surface: #ffffff;
+  --surface-2: #eceef1;
+  --border: rgba(0, 0, 0, 0.08);
+  --accent: #16b57a;
+  --accent-dim: rgba(22, 181, 122, 0.12);
+  --accent-2: #e0424f;
+  --text: #14161a;
+  --text-dim: #5a5e66;
+  --text-faint: #8a8e96;
+}
+
+:root[data-theme="dark"] {
+  --bg: #0b0c0f;
+  --surface: #15171b;
+  --surface-2: #1d2025;
+  --border: rgba(255, 255, 255, 0.08);
+  --accent: #34e5a1;
+  --accent-dim: rgba(52, 229, 161, 0.15);
+  --accent-2: #ff5f6d;
+  --text: #f4f5f7;
+  --text-dim: #8b8f98;
+  --text-faint: #55585f;
+}
+
+/* ---------- Tombol toggle tema ---------- */
+.theme-toggle-btn {
+  width: 36px;
+  height: 36px;
+  border-radius: 50%;
+  background: var(--surface);
+  border: 1px solid var(--border);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  color: var(--text-dim);
+  flex-shrink: 0;
+  transition: background .2s, color .2s;
+}
+
+.theme-toggle-btn:active { color: var(--accent); }
+
+.theme-icon-moon { display: none; }
+
+/* Mode terang aktif (otomatis ATAU manual) -> tampilkan ikon bulan (ajakan pindah ke gelap) */
+@media (prefers-color-scheme: light) {
+  .theme-icon-sun { display: none; }
+  .theme-icon-moon { display: block; }
+}
+:root[data-theme="light"] .theme-icon-sun { display: none; }
+:root[data-theme="light"] .theme-icon-moon { display: block; }
+:root[data-theme="dark"] .theme-icon-sun { display: block; }
+:root[data-theme="dark"] .theme-icon-moon { display: none; }
+
 * { box-sizing: border-box; margin: 0; padding: 0; -webkit-tap-highlight-color: transparent; }
 
 html, body {

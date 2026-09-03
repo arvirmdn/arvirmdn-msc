@@ -14,6 +14,31 @@ const homeRetryBtn = document.getElementById("homeRetryBtn");
 
 const audio = document.getElementById("audioPlayer");
 
+// ---------- Tema gelap/terang ----------
+const themeToggleBtn = document.getElementById("themeToggleBtn");
+const THEME_KEY = "musikin-theme";
+
+function currentEffectiveTheme() {
+  const manual = document.documentElement.getAttribute("data-theme");
+  if (manual === "light" || manual === "dark") return manual;
+  return window.matchMedia("(prefers-color-scheme: light)").matches ? "light" : "dark";
+}
+
+function applyThemeColorMeta(theme) {
+  const color = theme === "light" ? "#f5f6f8" : "#0b0c0f";
+  document.querySelectorAll('meta[name="theme-color"]').forEach((el) => el.setAttribute("content", color));
+}
+
+themeToggleBtn.addEventListener("click", () => {
+  const next = currentEffectiveTheme() === "dark" ? "light" : "dark";
+  document.documentElement.setAttribute("data-theme", next);
+  applyThemeColorMeta(next);
+  try {
+    localStorage.setItem(THEME_KEY, next);
+  } catch (e) {}
+});
+applyThemeColorMeta(currentEffectiveTheme());
+
 // Mini player
 const miniPlayer = document.getElementById("miniPlayer");
 const miniThumb = document.getElementById("miniThumb");
