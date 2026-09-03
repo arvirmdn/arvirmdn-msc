@@ -236,15 +236,38 @@ HOME_SECTIONS = [
 _home_cache = {"data": None, "ts": 0}
 HOME_CACHE_TTL = 20 * 60  # detik — biar gak nge-hit yt-dlp tiap kali tab Home dibuka
 
+# Kalau YouTube sering nge-block/nge-throttle IP server (umum banget di
+# hosting cloud kayak Railway), pasang file cookies.txt (export dari browser
+# yang login YouTube, pakai extension "Get cookies.txt") lalu set env var
+# COOKIES_FILE ke path-nya. Kosongin/hilangin env var ini kalau gak butuh.
+COOKIES_FILE = os.environ.get("COOKIES_FILE", "").strip()
+_cookies_opt = {"cookiefile": COOKIES_FILE} if COOKIES_FILE and os.path.exists(COOKIES_FILE) else {}
+
+# Retry/timeout bawaan yt-dlp sendiri — biar gangguan jaringan sesaat gak
+# langsung bikin request gagal total.
+_RESILIENCE_OPTS = {
+    "retries": 5,
+    "fragment_retries": 5,
+    "extractor_retries": 3,
+    "socket_timeout": 15,
+}
+
 YDL_SEARCH_OPTS = {
     "quiet": True,
     "no_warnings": True,
     "skip_download": True,
     "extract_flat": "in_playlist",
     "default_search": "ytsearch",
+    **_RESILIENCE_OPTS,
+    **_cookies_opt,
 }
 
-YDL_STREAM_OPTS = {
+# Beberapa kombinasi player_client dicoba berurutan sampai salah satu berhasil
+# ambil URL audio yang valid. "android"/"ios" biasanya lolos dari pembatasan
+# PO-token yang makin sering diterapkan YouTube ke client "web".
+PLAYER_CLIENT_ATTEMPTS = [["android"], ["ios"], ["web"], ["android", "ios", "web"]]
+
+YDL_STREAM_OPTS_BASE = {
     "quiet": True,
     "no_warnings": True,
     "skip_download": True,
@@ -252,14 +275,8 @@ YDL_STREAM_OPTS = {
     # WebM/Opus (default lama) TIDAK didukung Safari sama sekali.
     "format": "bestaudio[ext=m4a]/bestaudio[acodec^=mp4a]/bestaudio/best",
     "noplaylist": True,
-    # Client "android"/"ios" biasanya lolos dari pembatasan/PO-token yang makin
-    # sering diterapkan YouTube ke client "web" — kalau satu client gagal,
-    # yt-dlp otomatis coba client berikutnya di daftar ini.
-    "extractor_args": {
-        "youtube": {
-            "player_client": ["android", "ios", "web"],
-        }
-    },
+    **_RESILIENCE_OPTS,
+    **_cookies_opt,
 }
 
 
@@ -298,27 +315,43 @@ def _search_youtube(query: str, limit: int = 20):
 
 
 def _get_audio_stream_info(video_id: str) -> dict:
-    with yt_dlp.YoutubeDL(YDL_STREAM_OPTS) as ydl:
-        info = ydl.extract_info(f"https://www.youtube.com/watch?v={video_id}", download=False)
-        url = info.get("url")
-        ext = info.get("ext") or "m4a"
-        if not url:
-            formats = info.get("formats") or []
-            # Audio-only (tanpa video), utamakan m4a demi kompatibilitas iPhone/Safari
-            audio_formats = [
-                f for f in formats
-                if f.get("acodec") not in (None, "none") and f.get("vcodec") in (None, "none")
-            ]
-            if not audio_formats:
-                raise RuntimeError("Tidak ada format audio ditemukan")
-            audio_formats.sort(
-                key=lambda f: (f.get("ext") == "m4a", f.get("abr") or 0),
-                reverse=True,
-            )
-            chosen = audio_formats[0]
-            url = chosen["url"]
-            ext = chosen.get("ext") or "m4a"
-        return {"url": url, "ext": ext}
+    last_error = None
+    for clients in PLAYER_CLIENT_ATTEMPTS:
+        opts = {
+            **YDL_STREAM_OPTS_BASE,
+            "extractor_args": {"youtube": {"player_client": clients}},
+        }
+        try:
+            with yt_dlp.YoutubeDL(opts) as ydl:
+                info = ydl.extract_info(
+                    f"https://www.youtube.com/watch?v={video_id}", download=False
+                )
+                url = info.get("url")
+                ext = info.get("ext") or "m4a"
+                if not url:
+                    formats = info.get("formats") or []
+                    # Audio-only (tanpa video), utamakan m4a demi kompatibilitas iPhone/Safari
+                    audio_formats = [
+                        f for f in formats
+                        if f.get("acodec") not in (None, "none") and f.get("vcodec") in (None, "none")
+                    ]
+                    if not audio_formats:
+                        raise RuntimeError("Tidak ada format audio ditemukan")
+                    audio_formats.sort(
+                        key=lambda f: (f.get("ext") == "m4a", f.get("abr") or 0),
+                        reverse=True,
+                    )
+                    chosen = audio_formats[0]
+                    url = chosen["url"]
+                    ext = chosen.get("ext") or "m4a"
+                if not url:
+                    raise RuntimeError("URL audio kosong")
+                return {"url": url, "ext": ext}
+        except Exception as exc:  # coba client berikutnya sebelum benar-benar menyerah
+            last_error = exc
+            time.sleep(0.4)
+            continue
+    raise last_error or RuntimeError("Gagal mengambil audio dari semua client")
 
 
 @app.get("/api/search")
@@ -377,19 +410,31 @@ async def stream(request: Request, video_id: str):
         timeout=httpx.Timeout(connect=10.0, read=60.0, write=10.0, pool=10.0),
         follow_redirects=True,
     )
-    try:
-        req = client.build_request("GET", audio_url, headers=upstream_headers)
-        upstream_resp = await client.send(req, stream=True)
-    except Exception as exc:
-        await client.aclose()
-        raise HTTPException(status_code=502, detail=f"Gagal konek ke sumber audio: {exc}")
+    upstream_resp = None
+    last_error = None
+    # Coba konek ke sumber audio sampai 3x — kadang googlevideo.com nolak
+    # sesaat/transient, bukan berarti URL-nya beneran mati.
+    for attempt in range(3):
+        try:
+            req = client.build_request("GET", audio_url, headers=upstream_headers)
+            upstream_resp = await client.send(req, stream=True)
+            if upstream_resp.status_code >= 400:
+                await upstream_resp.aclose()
+                last_error = f"status {upstream_resp.status_code}"
+                upstream_resp = None
+                await asyncio.sleep(0.5)
+                continue
+            break
+        except Exception as exc:
+            last_error = str(exc)
+            await asyncio.sleep(0.5)
+            continue
 
-    if upstream_resp.status_code >= 400:
-        await upstream_resp.aclose()
+    if upstream_resp is None:
         await client.aclose()
         raise HTTPException(
             status_code=502,
-            detail=f"Sumber audio menolak request (status {upstream_resp.status_code})",
+            detail=f"Sumber audio menolak/gagal konek setelah beberapa percobaan ({last_error})",
         )
 
     resp_headers = {"accept-ranges": "bytes"}
@@ -401,6 +446,11 @@ async def stream(request: Request, video_id: str):
         try:
             async for chunk in upstream_resp.aiter_bytes(chunk_size=65536):
                 yield chunk
+        except Exception:
+            # Koneksi ke googlevideo.com putus di tengah jalan (umum kalau
+            # lagi dibatasi YouTube). Biarkan stream berhenti dengan rapi;
+            # frontend yang nanganin retry/pesan errornya ke user.
+            return
         finally:
             await upstream_resp.aclose()
             await client.aclose()
@@ -415,7 +465,9 @@ async def info(video_id: str):
         raise HTTPException(status_code=400, detail="video_id tidak valid")
     try:
         data = await _run_sync(
-            lambda vid: yt_dlp.YoutubeDL(YDL_STREAM_OPTS).extract_info(
+            lambda vid: yt_dlp.YoutubeDL(
+                {**YDL_STREAM_OPTS_BASE, "extractor_args": {"youtube": {"player_client": ["android", "ios", "web"]}}}
+            ).extract_info(
                 f"https://www.youtube.com/watch?v={vid}", download=False
             ),
             video_id,
