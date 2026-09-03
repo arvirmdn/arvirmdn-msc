@@ -1217,3 +1217,34 @@ function buildHomeCard(track, onClick) {
 }
 
 loadHome();
+
+// ---------- Trap tombol "kembali" HP/browser ----------
+// Tombol kembali TIDAK dipakai buat keluar dari web / balik ke halaman
+// sebelumnya. Kalau ada sheet pemutar atau modal yang lagi kebuka, tombol
+// kembali cuma nutup itu. Kalau gak ada yang kebuka, tombol kembali gak
+// ngapa-ngapain sama sekali (tetap di halaman ini).
+function pushBackTrapState() {
+  history.pushState({ musikinBackTrap: true }, "", location.href);
+}
+pushBackTrapState();
+
+function closeTopmostOverlayForBack() {
+  if (playerSheet.classList.contains("open")) {
+    playerSheet.classList.remove("open");
+    return true;
+  }
+  const openModal = document.querySelector(".modal-overlay.open");
+  if (openModal) {
+    openModal.classList.remove("open");
+    return true;
+  }
+  return false;
+}
+
+window.addEventListener("popstate", () => {
+  // Setiap kali browser "mundur" satu langkah (dummy state ini kepop),
+  // langsung dorong lagi state yang sama biar gak pernah benar-benar
+  // navigasi keluar dari halaman ini.
+  pushBackTrapState();
+  closeTopmostOverlayForBack();
+});
